@@ -1,0 +1,7 @@
+graph parent {
+	spam -- eggs
+	subgraph child {
+		node [shape=box]
+		foo -- bar
+	}
+}
