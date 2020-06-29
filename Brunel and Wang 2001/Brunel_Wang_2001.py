@@ -36,23 +36,42 @@ parser.add_argument('-t', '--stimtime',
 parser.add_argument('-r', '--rate',
     help="firing rate for selected population (hertz)",
     type=float, default=25.0)
-parser.add_argument('--STDP',
+parser.add_argument('--rate2',
+    help="firing rate for second selected population (hertz)",
+    type=float, default=0.0)
+plasticity_group = parser.add_mutually_exclusive_group()
+plasticity_group.add_argument('--STDP',
     help="whether to enable STDP at excitatory synapses",
     action="store_true")
+plasticity_group.add_argument('--WSTDP',
+    help="whether to enable weight dependent (soft) STDP at excitatory synapses",
+    action="store_true")
+plasticity_group.add_argument('--Triplet',
+    help="whether to enable Triplet rule at excitatory synapses",
+    action="store_true")
+
 parser.add_argument('-a', '--Apre',
     help="LTP increment size for STDP rule",
     type=float, default=0.01)
+parser.add_argument('-W', '--wmax',
+    help="maximum weight value for plastic weights",
+    type=float, default=5.0)
+parser.add_argument('--mu',
+    help="exponent for the W-STDP rule",
+    type=float, default=0.025)
 parser.add_argument('--seed',
     help="random seed for Brian2",
     type=int)
 # TODO: add plotting arguments
 # TODO: add W-STDP and Triplet Rule simulations
 
-args = parser.parse_args()
+# group = parser.add_mutually_exclusive_group()
+# group.add_argument("-v", "--verbose", action="store_true")
+# group.add_argument("-q", "--quiet", action="store_true")
 
+args = parser.parse_args()
 print(args)
-# for k, v in vars(args).items():
-#     print(f"{k}: {v}")
+
 assert args.fraction <= 1.0 and args.fraction >= 0, \
     'selective fraction must be between 0 and 1'
 assert args.fraction * args.populations <= 1.0, \
@@ -60,8 +79,7 @@ assert args.fraction * args.populations <= 1.0, \
 if args.seed:
     seed(args.seed)
 
-# if args.version:
-#     print("This is version 0.1")
+
 
 runtime = args.runtime * second
 
@@ -239,7 +257,7 @@ if args.STDP:
     simulation_namespace.update(dict(
         taupre = taupre,
         taupost = taupost,
-        wmax = 5,
+        wmax = args.wmax,
         Apre = args.Apre,
         Apost = -args.Apre*taupre/taupost*1.05
     ))
@@ -254,6 +272,30 @@ if args.STDP:
     eqs_post_glut = '''
     apost += Apost
     w = clip(w+apre, 0, wmax)
+    '''
+# W-STDP
+if args.WSTDP:
+    # Taken mostly from Brian2 STDP example
+    taupre = taupost = 20*ms
+    simulation_namespace.update(dict(
+        taupre = taupre,
+        taupost = taupost,
+        wmax = args.wmax,
+        Apre = args.Apre,
+        Apost = -args.Apre*taupre/taupost*1.05,
+        mu = args.mu
+    ))
+    eqs_glut += '''
+    dapre/dt = -apre/taupre : 1 (event-driven)
+    dapost/dt = -apost/taupost : 1 (event-driven)
+    '''
+    eqs_pre_glut += '''
+    apre += Apre
+    w = clip(w+apost*(w**mu), 0, wmax)
+    '''
+    eqs_post_glut = '''
+    apost += Apost
+    w = clip(w+apre*(wmax - w)**mu, 0, wmax)
     '''
 
 def get_lognormal_weights(target_mean, num_weights, normal_std=0.0):
@@ -272,7 +314,7 @@ num_weights = C_E_E.w[:].shape[0]
 C_E_E.w[:] = get_lognormal_weights(
     target_mean=1.0,
     num_weights=num_weights,
-    normal_std=0.0
+    normal_std=args.sigma
 )
 
 for pi in range(N_non, N_non + p * N_sub, N_sub):
@@ -282,7 +324,7 @@ for pi in range(N_non, N_non + p * N_sub, N_sub):
     C_E_E.w[C_E_E.indices[:, pi:pi + N_sub]] = get_lognormal_weights(
         target_mean=w_minus,
         num_weights=num_weights,
-        normal_std=0.0
+        normal_std=args.sigma
     )
     # internal current subpopulation to current subpopulation
     # C_E_E.w[C_E_E.indices[pi:pi + N_sub, pi:pi + N_sub]] = w_plus
@@ -290,7 +332,7 @@ for pi in range(N_non, N_non + p * N_sub, N_sub):
     C_E_E.w[C_E_E.indices[pi:pi + N_sub, pi:pi + N_sub]] = get_lognormal_weights(
         target_mean=w_plus,
         num_weights=num_weights,
-        normal_std=0.0
+        normal_std=args.sigma
     )
 
 # E to I
@@ -312,18 +354,21 @@ C_P_I = PoissonInput(P_I, 's_AMPA_ext', C_ext, rate_ext, '1')
 
 # at 1s, select population 1
 C_selection = int(f * C_ext)
-# rate_selection = 25 * Hz
-rate_selection = args.rate * Hz
-# stimuli1 = TimedArray(np.r_[np.zeros(40), np.ones(2), np.zeros(100)], dt=25 * ms)
 stimtime = int(args.stimtime / 25)
-stimuli1 = TimedArray(np.r_[np.zeros(40), np.ones(stimtime), np.zeros(100)], dt=25 * ms)
-simulation_namespace['stimuli1'] = stimuli1
-input1 = PoissonInput(P_E[N_non:N_non + N_sub], 's_AMPA_ext', C_selection, rate_selection, 'stimuli1(t)')
+if args.rate > 0.0 and stimtime > 0:
+    # rate_selection = 25 * Hz
+    rate_selection = args.rate * Hz
+    # stimuli1 = TimedArray(np.r_[np.zeros(40), np.ones(2), np.zeros(100)], dt=25 * ms)
+    stimuli1 = TimedArray(np.r_[np.zeros(40), np.ones(stimtime), np.zeros(100)], dt=25 * ms)
+    simulation_namespace['stimuli1'] = stimuli1
+    input1 = PoissonInput(P_E[N_non:N_non + N_sub], 's_AMPA_ext', C_selection, rate_selection, 'stimuli1(t)')
 
 # at 2s, select population 2
-# stimuli2 = TimedArray(np.r_[np.zeros(80), np.ones(2), np.zeros(100)], dt=25 * ms)
-# simulation_namespace['stimuli2'] = stimuli2
-# input2 = PoissonInput(P_E[N_non + N_sub:N_non + 2 * N_sub], 's_AMPA_ext', C_selection, rate_selection, 'stimuli2(t)')
+if args.rate2 > 0.0 and stimtime > 0:
+    rate_selection2 = args.rate2 * Hz
+    stimuli2 = TimedArray(np.r_[np.zeros(80), np.ones(stimtime), np.zeros(100)], dt=25 * ms)
+    simulation_namespace['stimuli2'] = stimuli2
+    input2 = PoissonInput(P_E[N_non + N_sub:N_non + 2 * N_sub], 's_AMPA_ext', C_selection, rate_selection2, 'stimuli2(t)')
 
 # at 4s, reset selection
 # stimuli_reset = TimedArray(np.r_[np.zeros(120), np.ones(2), np.zeros(100)], dt=25 * ms)
@@ -341,7 +386,7 @@ r_E_sels = [PopulationRateMonitor(P_E[pi:pi + N_sub]) for pi in range(N_non, N_n
 r_E = PopulationRateMonitor(P_E[:N_non])
 r_I = PopulationRateMonitor(P_I)
 
-if args.STDP:
+if args.STDP or args.WSTDP or args.Triplet:
     W_before = np.full((len(P_E), len(P_E)), np.nan)
     # Insert the values from the Synapses object
     W_before[C_E_E.i[:], C_E_E.j[:]] = C_E_E.w[:]
@@ -355,7 +400,7 @@ net.run(runtime,
     report='stdout',
     namespace=simulation_namespace)
 
-if args.STDP:
+if args.STDP or args.WSTDP or args.Triplet:
     W_after = np.full((len(P_E), len(P_E)), np.nan)
     # Insert the values from the Synapses object
     W_after[C_E_E.i[:], C_E_E.j[:]] = C_E_E.w[:]
@@ -386,11 +431,17 @@ for i, sp_E_sel in enumerate(sp_E_sels[::-1]):
 
 legend()
 
-if args.STDP:
+if args.STDP or args.WSTDP or args.Triplet:        
     fig, axes = subplots(1, 2)
-    axes[0].imshow(W_before, vmin=0.0, vmax=simulation_namespace['wmax'])
-    axes[1].imshow(W_after, vmin=0.0, vmax=simulation_namespace['wmax'])
+    axes[0].imshow(W_before)
+    axes[1].imshow(W_after)
     axes[0].set_title('Weights Before')
     axes[1].set_title('Weights After')
+    
+    figure()
+    hist(W_before.ravel(), density=True, bins=100, label='before', alpha=0.8)
+    hist(W_after.ravel(), density=True, bins=100, label='after', alpha=0.8)
+    legend()
+    title('Weights histogram')
     
 show()
