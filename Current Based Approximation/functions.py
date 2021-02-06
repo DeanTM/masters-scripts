@@ -225,7 +225,7 @@ def dW_dt_BCM(W, nu, theta):
     return dW_dt
 
 @jit(nopython=True)
-def get_weights(p=p):
+def get_weights(w_plus=w_plus, p=p, f=f, w_minus=w_minus):
     W = np.ones((p+2, p+2))  # from column to row
     for i in range(0, p+1):
         weights = np.full(p+2, w_minus)
