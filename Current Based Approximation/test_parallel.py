@@ -10,7 +10,7 @@ dask.config.set(scheduler='processes')
 import argparse
 
 parser = argparse.ArgumentParser(
-    description='testing paramerts')
+    description='testing parameters')
 parser.add_argument(
     '-n', '--max_threads',
     type=int, default=60

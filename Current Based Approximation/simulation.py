@@ -1,7 +1,7 @@
 from functions import *
 
 # can't jit with **kwargs syntax
-w_max = 3.5
+w_max_default = 3.5
 mu_default = 0.2
 def F(
     W, nu, theta=None,
@@ -13,6 +13,7 @@ def F(
     Default implementation is BCM rule.
     """
     mu = weight_plasticity_params.get('mu', mu_default)
+    w_max = weight_plasticity_params.get('w_max', w_max_default)
     F_val = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1))
     soft_bounds = (W*(w_max - W)/w_max)**mu
     F_val = soft_bounds * F_val
@@ -91,8 +92,8 @@ def run_trial_coherence_2afc(
     W=None,
     theta=None,
     coherence=0.5,
-    trial_start=0.2,  # rename to stim_start
-    trial_end=0.4,  # rename to stim_end
+    stim_start=0.2,  # rename to stim_start
+    stim_end=0.4,  # rename to stim_end
     eval_time=0.4,
     dR_dt=dR_dt,
     **weight_plasticity_params
@@ -118,8 +119,8 @@ def run_trial_coherence_2afc(
         plasticity=plasticity,
         W=W,
         external_input_multiplier=multiplier,
-        trial_start=trial_start,
-        trial_end=trial_end,
+        stim_start=stim_start,
+        stim_end=stim_end,
         eval_time=eval_time,
         reward_func=reward_func,
         dR_dt=dR_dt,
@@ -135,8 +136,8 @@ def run_trial(
     W=None,
     theta=None,
     external_input_multiplier=np.ones(p+2),
-    trial_start=0.2,  # rename to stim_start
-    trial_end=0.4,  # rename to stim_end
+    stim_start=0.2,  # rename to stim_start
+    stim_end=0.4,  # rename to stim_end
     eval_time=0.4,
     reward_func=lambda x: 0.0,  # TODO
     dR_dt=dR_dt,
@@ -242,7 +243,7 @@ def run_trial(
             s_AMPA,
             tau_AMPA * rate_ext
         )
-        if t > trial_start and t < trial_end:
+        if t > stim_start and t < stim_end:
             s_AMPA_ext = s_AMPA_ext * external_input_multiplier
             
         ip_AMPA_ext = (V_drive - V_E) * C_ext * s_AMPA_ext
