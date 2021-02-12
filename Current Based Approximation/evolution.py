@@ -1,14 +1,19 @@
 from simulation import *
 
-# # TODO: move Dask stuff to a test script
-
 nolearn_genome = [
     0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
     0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,0.
 ]
 
-
 # Functions for handling the genomes
+@jit(nopython=True)
+def sigmoid(x):
+    return 1./(1+np.exp(-x))
+
+@jit(nopython=True)
+def softplus(x):
+    return np.log(1+np.exp(x))
+
 @jit(nopython=True)
 def get_params_from_genome(genome):
     """Genome must be passed in as a numpy array for the jit."""
@@ -33,18 +38,12 @@ def get_params_from_genome(genome):
     params[-1] = beta
     return params
     
-@jit(nopython=True)
-def sigmoid(x):
-    return 1./(1+np.exp(-x))
-
-@jit(nopython=True)
-def softplus(x):
-    return np.log(1+np.exp(x))
 
 def run_repeated_trial(
     W_initial, plasticity_params,
     trial_func, n_runs,
     verbose=False,
+    nan_verbose=False,
     seed=None
 ):
     W = W_initial
@@ -70,7 +69,32 @@ def run_repeated_trial(
         else:
             for k, v in results_dict.items():
                 full_results_dict[k].append(v)
+        # stop repeating if weights are NaN
+        if np.any(np.isnan(W)):
+            if nan_verbose:
+                print(f"NaN encountered in trial {i+1}/{n_runs}")
+                # print(
+                #     "Params: ",
+                #     *get_param_dict(plasticity_params).items(),
+                #     sep='  '
+                #     )
+            break
     return full_results_dict
+
+
+# def run_multiple_restarts_repeated_trial(
+#     W_initial, plasticity_params,
+#     trial_func, n_runs, n_multiples,
+#     verbose=False,
+#     seed=None
+# ):
+#     # results dict has form:
+#     # key=variable_name, value=[variable_array]
+
+#     # parallelisation will be done across individuals
+#     all_results = []
+
+
         
 def get_fitness(
     W_initial, plasticity_params,

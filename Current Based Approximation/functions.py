@@ -3,7 +3,7 @@ from parameters import *
 import numba
 from numba import jit
 
-import numpy as np
+# import numpy as np
 from scipy import special, integrate
 
 import warnings
@@ -14,6 +14,15 @@ pyramidal_mask = np.array([True] * (p+1) + [False])
 # plasticity masks used in determining which weights to update
 plasticity_mask_source = pyramidal_mask.copy()
 plasticity_mask_target = np.full_like(plasticity_mask_source, True)
+
+# sigma
+@jit(nopython=True)
+def get_sigma(lambda_=0.8):
+    sigma = np.sqrt(
+        g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * rate_ext * tau_AMPA**2 / (g_m**2 * tau_m)
+    )
+    sigma[:-1] = lambda_ * (2e-3) + (1-lambda_) * sigma[:-1]
+    return sigma
 
 # Jahr-Stevens formula functions
 @jit(nopython=True)
@@ -34,6 +43,15 @@ def J_2(V):
         result[i] = numerator / denominator
     return result
 
+# g_NMDA_eff = lambda V: g_NMDA * J_2(V)
+@jit(nopython=True)
+def g_NMDA_eff(V):
+    return g_NMDA * J_2(V)
+    
+# V_E_eff = lambda V: V - (1 / J_2(V)) * (V - V_E) / J(V)
+@jit(nopython=True)
+def V_E_eff(V):
+    return V - (1 / J_2(V)) * (V - V_E) / J(V)
 
 # Functions to compute steady-state NMDA channels
 @jit(nopython=True)
@@ -145,7 +163,7 @@ def rate_vectorised(
     # them and adding them back together
     for i, (lb, ub) in enumerate(zip(LB, UB)):
         integral, error = integrate.quad(
-            _siegert_integrand, lb, ub
+            _siegert_integrand, lb, ub, limit=200
         )
         integration_results[i] = integral
     return (tau_rp + tau_m * root_pi * integration_results)**-1
@@ -159,6 +177,49 @@ def phi(
     V_SS = V_L - I_syn/g_m
     return rate_vectorised(V_SS, sigma, tau_m, tau_rp)
 
+
+c=310.*1e9
+I=125.
+g=0.16
+@jit(nopython=True)
+def phi_fit(
+    I_syn,
+    c=c,
+    I=I,
+    g=g
+):
+    numerator = c * (-I_syn) - I
+    denominator = 1 - np.exp(-g*(numerator))
+    return numerator / denominator
+
+
+@jit(nopython=True)
+def polyfunc(x, coeff):
+    s = np.zeros_like(x)
+    for n, c_ in enumerate(coeff[::-1]):
+        s += c_ * (x**n)
+    return s
+
+
+polyfit_coeffs_E = np.load('polyfit_coeffs_excitatory.npy')
+max_rate_E = 1./tau_rp_E
+@jit(nopython=True)
+def phi_fit_E(I_syn, sigma):
+    c = polyfunc(sigma, coeff=polyfit_coeffs_E[0, :])
+    I = polyfunc(sigma, coeff=polyfit_coeffs_E[1, :])
+    g = polyfunc(sigma, coeff=polyfit_coeffs_E[2, :])
+    rates = phi_fit(I_syn, c,I,g)
+    rates[rates > max_rate_E] = max_rate_E
+    return rates
+
+# sigma is ignored parameter, kept for signatures to match
+c_I, I_I, g_I = np.load('direct_fit_inhibitory.npy')
+max_rate_I = 1./tau_rp_I
+@jit(nopython=True)
+def phi_fit_I(I_syn, sigma=None):
+    rates = phi_fit(I_syn, c_I, I_I, g_I)
+    rates[rates > max_rate_I] = max_rate_I
+    return rates
 
 # Euler derivative updates
 # @jit(nopython=True)  # faster without jit for now
@@ -183,7 +244,20 @@ def dnu_dt(
     phi_Isyn = phi(
         I_syn, g_m, sigma, tau_m, tau_rp
     )
-    deriv = (-nu + phi_Isyn)/tau_r
+    deriv = (-nu + phi_Isyn)/tau_rate
+    return deriv
+
+def dnu_dt_fitted(
+    nu, I_syn, g_m, sigma, tau_m, tau_rp
+):
+    phi_Isyn = np.zeros_like(nu)
+    phi_Isyn[pyramidal_mask] = phi_fit_E(
+        I_syn[pyramidal_mask], sigma[pyramidal_mask],
+    )
+    phi_Isyn[~pyramidal_mask] = phi_fit_I(
+        I_syn[~pyramidal_mask], sigma[~pyramidal_mask],
+    )
+    deriv = (-nu + phi_Isyn)/tau_rate
     return deriv
 
 @jit(nopython=True)
@@ -225,6 +299,10 @@ def dW_dt_BCM(W, nu, theta):
     return dW_dt
 
 @jit(nopython=True)
+def get_w_minus(w_plus=w_plus, f=f):
+    return 1.0 - f*(w_plus - 1.0) / (1.0 - f)
+
+@jit(nopython=True)
 def get_weights(w_plus=w_plus, p=p, f=f, w_minus=w_minus):
     W = np.ones((p+2, p+2))  # from column to row
     for i in range(0, p+1):
@@ -246,11 +324,14 @@ def simulate_original(
     coherence=0.5,
     plasticity=True,
     W=None,
-    show_time=False
+    show_time=False,
+    use_phi_fitted=False
 ):
     """
     The original simulation for a n-AFC task with one external stimulus.
     Used for debugging.
+    
+    Added feature for testing: to use the fitted phi func.
     """
     ## Initialise arrays for computation
     # For some reason this can't be numba.jit-ed
@@ -387,13 +468,23 @@ def simulate_original(
 
         I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA + ic_noise
 
-        dnu_dt_now = dnu_dt(
-            nu, I_syn,
-            sigma=sigma,
-            g_m=g_m,
-            tau_m=tau_m,
-            tau_rp=tau_rp
-        )
+        dnu_dt_now = None
+        if use_phi_fitted:
+            dnu_dt_now = dnu_dt_fitted(
+                nu, I_syn,
+                sigma=sigma,
+                g_m=g_m,
+                tau_m=tau_m,
+                tau_rp=tau_rp
+            )
+        else:
+            dnu_dt_now = dnu_dt(
+                nu, I_syn,
+                sigma=sigma,
+                g_m=g_m,
+                tau_m=tau_m,
+                tau_rp=tau_rp
+            )
         dic_noise_dt_now = dic_noise_dt(ic_noise)
         ds_NMDA_dt_now = ds_NMDA_dt(s_NMDA, nu)
         ds_AMPA_dt_now = ds_AMPA_dt(s_AMPA, nu)
@@ -460,7 +551,7 @@ def test_funcs():
         np.full(5, 2e-3),
         tau_m_E, tau_rp_E
     )
-    
+    print("Running test simulation")
     times,\
     nu_tracked,\
     s_NMDA_tracked,\
@@ -472,6 +563,21 @@ def test_funcs():
         total_time=0.6, coherence=0.7,
         plasticity=False,
         show_time=True
+    )
+    print(f"Simulation ran until {times[-1]:.2f} seconds")
+    print("\nRunning fitted-phi simulation")
+    times,\
+    nu_tracked,\
+    s_NMDA_tracked,\
+    s_AMPA_tracked,\
+    s_GABA_tracked,\
+    I_syn_tracked,\
+    theta_BCM_tracked,\
+    W_tracked = simulate_original(
+        total_time=0.6, coherence=0.7,
+        plasticity=False,
+        show_time=True,
+        use_phi_fitted=True
     )
     print(f"Simulation ran until {times[-1]:.2f} seconds")
     

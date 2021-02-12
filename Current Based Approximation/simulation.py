@@ -1,33 +1,108 @@
 from functions import *
+from collections.abc import Iterable
+
+# todo: constrain the parameters
+
+# weight params vector will be of the form
+# (p_const, p_theta, mu, tau_theta, xi_00,
+#  xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, 
+#  xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1,
+#  xi_12_0, xi_12_1, tau_e, beta)
+eta_Oja = 0.5
+Oja_parameters = (
+    2.,1.,0.,tau_rate,eta_Oja,
+    0.,0.,0.,0.,eta_Oja,0.,
+    0.,0.,0.,0.,0.,0.,
+    0.,0.,1.,1.
+)
+BCM_parameters = (
+    0.,2.,0.,10.,0.,
+    0.,0.,0.,0.,0.,
+    -0.0337/64., # ??? any negative number, but what scale
+    0.,0., 0.0337*0.0168, 0.,0.,0.,
+    0.,0.,1.,1.
+)
+nolearn_parameters = (
+    0.,1.,0.5,100.,0.,
+    0.,0.,0.,0.,0.,0.,
+    0.,0.,0.,0.,0.,0.,
+    0.,0.,100.,0.5
+)
+
+param_names = [
+    'p_const', 'p_theta', 'mu', 'tau_theta','xi_00', 
+    'xi_10_0', 'xi_10_1', 'xi_01_0', 'xi_01_1', 'xi_11_0', 'xi_11_1',
+    'xi_20_0', 'xi_20_1', 'xi_21_0', 'xi_21_1', 'xi_02_0', 'xi_02_1',
+    'xi_12_0', 'xi_12_1', 'tau_e', 'beta'
+    ]
+def get_param_dict(plasticity_params):
+    return dict(zip(param_names, plasticity_params))
+
+
+# TODO: test
+@jit(nopython=True)
+def F_full(nu, W, theta, plasticity_params):
+    # crudely coded
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+    
+    nu = nu.reshape(-1,1)  # make sure it's a column
+    theta = theta.reshape(-1, 1)
+    theta_cast = theta @ np.ones_like(theta).T
+    theta_cast_p = theta_cast**p_theta
+    ones_vec = np.ones_like(nu)
+    result = np.zeros_like(W)
+    
+#     print(nu.shape, ones_vec.shape)
+    
+    result += (xi_10_0 + xi_10_1 * theta_cast_p) * (nu @ ones_vec.T)
+    result += (xi_01_0 + xi_01_1 * theta_cast_p) * (ones_vec @ nu.T)
+    result += (xi_11_0 + xi_11_1 * theta_cast_p) * (nu @ nu.T)
+    result += (xi_20_0 + xi_20_1 * theta_cast_p) * ((nu**2) @ ones_vec.T)
+    result += (xi_21_0 + xi_21_1 * theta_cast_p) * ((nu**2) @ nu.T)
+    result += (xi_02_0 + xi_02_1 * theta_cast_p) * (ones_vec @ (nu.T**2))
+    result += (xi_12_0 + xi_12_1 * theta_cast_p) * (nu @ (nu.T**2))
+    result *= ((w_max_default - W)*W)**mu
+    result += xi_00 * (theta_cast**p_const) * W
+    return result
+    
+    
 
 # can't jit with **kwargs syntax
-w_max_default = 3.5
-mu_default = 0.2
-def F(
-    W, nu, theta=None,
-    **weight_plasticity_params
-):
-    """
-    `theta` param available for BCM-like heterosynaptic plasticity.
+# w_max_default = 3.5
+# mu_default = 0.2
+# def F(
+#     W, nu, theta=None,
+#     **weight_plasticity_params
+# ):
+#     """
+#     `theta` param available for BCM-like heterosynaptic plasticity.
     
-    Default implementation is BCM rule.
-    """
-    mu = weight_plasticity_params.get('mu', mu_default)
-    w_max = weight_plasticity_params.get('w_max', w_max_default)
-    F_val = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1))
-    soft_bounds = (W*(w_max - W)/w_max)**mu
-    F_val = soft_bounds * F_val
-    for j, b in enumerate(plasticity_mask_source):
-        if not b:
-            F_val[:, j] = 0.0
-    for i, b in enumerate(plasticity_mask_target):
-        if not b:
-            F_val[i, :] = 0.0
-    return F_val
+#     Default implementation is BCM rule.
+#     """
+#     mu = weight_plasticity_params.get('mu', mu_default)
+#     w_max = weight_plasticity_params.get('w_max', w_max_default)
+#     F_val = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1))
+#     soft_bounds = (W*(w_max - W)/w_max)**mu
+#     F_val = soft_bounds * F_val
+#     for j, b in enumerate(plasticity_mask_source):
+#         if not b:
+#             F_val[:, j] = 0.0
+#     for i, b in enumerate(plasticity_mask_target):
+#         if not b:
+#             F_val[i, :] = 0.0
+#     return F_val
 
-tau_theta_default = 0.1
+# tau_theta_default = 0.1
 # @jit(nopython=True)
-def dtheta_dt(theta, nu, **weight_plasticity_params):
+def dtheta_dt(
+    theta, nu,
+    plasticity_params,
+    **kwargs
+#     **weight_plasticity_params
+):
     """
     Threshold for the BCM-rule.
     
@@ -38,52 +113,68 @@ def dtheta_dt(theta, nu, **weight_plasticity_params):
     """
     if theta is None:
         return None
-    tau_theta = weight_plasticity_params.get('tau_theta', tau_theta_default)
-    dtheta_dt_now = (-theta + nu**2)/tau_theta
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+#     tau_theta = weight_plasticity_params.get('tau_theta', tau_theta_default)
+    dtheta_dt_now = (-theta + nu)/tau_theta
     return dtheta_dt_now
 
 tau_e_default = 1.
 # @jit(nopython=True)
 def de_dt(
     W, eligibility_trace, nu,
+    plasticity_params,
     theta=None,
     F_val=None,
-    **weight_plasticity_params
+    **kwargs
+#     **weight_plasticity_params
 ):
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
     if F_val is None:
-        F_val = F(W, nu, theta=theta, **weight_plasticity_params)
-    tau_e = weight_plasticity_params.get('tau_e', tau_e_default)
+#         F_val = F(W, nu, theta=theta, **weight_plasticity_params)
+        F_val = F_full(nu, W, theta, plasticity_params)
+#     tau_e = weight_plasticity_params.get('tau_e', tau_e_default)
     tau_de_dt = -eligibility_trace + F_val
     return tau_de_dt / tau_e
 
-tau_w_default = 10.
 beta_default = 0.
 # @jit(nopython=True)
 def dW_dt(
-    W, eligibility_trace, nu, reward,  # TODO: take away nu input
+    W, eligibility_trace, nu, reward,
+    plasticity_params,
     theta=None,
     F_val=None,
-    **weight_plasticity_params
+#     **weight_plasticity_params
+    **kwargs
 ):
-    tau_w = weight_plasticity_params.get('tau_w', tau_w_default)
-    beta = weight_plasticity_params.get('beta', beta_default)
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+#     tau_w = weight_plasticity_params.get('tau_w', tau_w_default)
+#     beta = weight_plasticity_params.get('beta', beta_default)
     if F_val is None:
         if beta > 0.:
-            F_val = F(W, nu, theta=theta, **weight_plasticity_params)
+#             F_val = F(W, nu, theta=theta, **weight_plasticity_params)
+            F_val = F_full(nu, W, theta, plasticity_params)
         else:
             F_val = 0.0
     tau_dw_dt = (1-beta)*eligibility_trace*reward + beta*F_val
-    return tau_dw_dt / tau_w
+    return tau_dw_dt  # / tau_w  # tau_w is redundant
 
 
-tau_reward = defaultdt * 2
 @jit(nopython=True)
-def dR_dt(reward):
-    dR_dt_now = (-reward)/tau_reward
+def dR_dt_default(reward, tau_reward=tau_reward_default):
+    dR_dt_now = -reward/tau_reward
     return dR_dt_now
     
 
-
+# log_2 = np.log(2)
 def run_trial_coherence_2afc(
     initialisation_steps=10,
     lambda_=0.8,
@@ -92,25 +183,36 @@ def run_trial_coherence_2afc(
     W=None,
     theta=None,
     coherence=0.5,
-    stim_start=0.2,  # rename to stim_start
-    stim_end=0.4,  # rename to stim_end
+    stim_start=0.2,
+    stim_end=0.4,
     eval_time=0.4,
-    dR_dt=dR_dt,
-    **weight_plasticity_params
+    dR_dt=dR_dt_default,
+    use_phi_fitted=True,
+    plasticity_params=nolearn_parameters,
+    seed=None,
+    **kwargs
+#     **weight_plasticity_params
 ):
     """Specifies stimulus and reward function for 2-afc task."""
+    if isinstance(coherence, Iterable):
+        coherence = np.random.choice(coherence)
+
     multiplier = np.ones(p+2)
     multiplier[1] += 0.05 * (1+coherence)
     multiplier[2] += 0.05 * (1-coherence)
     def reward_func(nu):
         reward = -1.
         if np.sign(coherence) == 1:
-            if np.argmax(nu[1:-1]) == 1:
+            if np.argmax(nu[1:-1]) == 0:  # new indexing
                 reward = 1.
         elif np.sign(coherence) == -1:
-            if np.argmax(nu[1:-1]) == 2:
+            if np.argmax(nu[1:-1]) == 1:
                 reward = 1. 
-        return reward
+        elif np.sign(coherence) == 0.:
+            reward = np.random.choice([-1,1])
+        # scale for fixed total reward
+        # still, for summing, scale by defaultdt
+        return reward / tau_reward_default
         
     return run_trial(
         initialisation_steps=initialisation_steps,
@@ -124,7 +226,66 @@ def run_trial_coherence_2afc(
         eval_time=eval_time,
         reward_func=reward_func,
         dR_dt=dR_dt,
-        **weight_plasticity_params
+        use_phi_fitted=use_phi_fitted,
+        plasticity_params=plasticity_params,
+        seed=seed,
+        **kwargs
+#         **weight_plasticity_params
+    )
+
+
+def run_trial_XOR(
+    initialisation_steps=10,
+    lambda_=0.8,
+    total_time=runtime,
+    plasticity=True,
+    W=None,
+    theta=None,
+    coherence=0.5,
+    stim_start=0.2,
+    stim_end=0.4,
+    eval_time=0.6,
+    dR_dt=dR_dt_default,
+    use_phi_fitted=True,
+    plasticity_params=nolearn_parameters,
+    seed=None,
+    **kwargs
+):
+    """Specifies stimulus and reward function for 2-afc task."""
+    assert p >= 4, "XOR needs two inputs and two outputs"
+    if isinstance(coherence, Iterable):
+        coherence = np.random.choice(coherence)
+    
+    multiplier = np.ones(p+2)
+    multiplier[1] += 0.05 * (1+coherence)
+    multiplier[2] += 0.05 * (1-coherence)
+    def reward_func(nu):
+        reward = -1.
+        if np.sign(coherence) == 1:
+            if np.argmax(nu[1:-1]) == 2:  # input at 1, output read from 3
+                reward = 1.
+        elif np.sign(coherence) == -1:
+            if np.argmax(nu[1:-1]) == 3:  # input at 2, output read from 4
+                reward = 1. 
+          # initial reward scaled for time provided:
+        return reward / tau_reward_default
+        
+    return run_trial(
+        initialisation_steps=initialisation_steps,
+        lambda_=lambda_,
+        total_time=total_time,
+        plasticity=plasticity,
+        W=W,
+        external_input_multiplier=multiplier,
+        stim_start=stim_start,
+        stim_end=stim_end,
+        eval_time=eval_time,
+        reward_func=reward_func,
+        dR_dt=dR_dt,
+        use_phi_fitted=use_phi_fitted,
+        plasticity_params=plasticity_params,
+        seed=seed,
+        **kwargs
     )
 
 
@@ -140,9 +301,14 @@ def run_trial(
     stim_end=0.4,  # rename to stim_end
     eval_time=0.4,
     reward_func=lambda x: 0.0,  # TODO
-    dR_dt=dR_dt,
-    **weight_plasticity_params
+    dR_dt=dR_dt_default,
+    use_phi_fitted=True,
+    plasticity_params=nolearn_parameters,
+    seed=None,
+    **kwargs
+#     **weight_plasticity_params
 ):
+    np.random.seed(seed)
     C_k = np.array([N_non] + [N_sub] * p + [N_I])
     g_m = np.array([g_m_E] * (p+1) + [g_m_I])
     C_m = np.array([C_m_E] * (p+1) + [C_m_I])
@@ -159,14 +325,14 @@ def run_trial(
     assert len(external_input_multiplier) == p+2
     
     # AMPA
-    g_AMPA = np.array([g_AMPA_rec_E]* (p+1) + [g_AMPA_rec_I])
+#     g_AMPA = np.array([g_AMPA_rec_E]* (p+1) + [g_AMPA_rec_I])
     s_AMPA = tau_AMPA * nu
     s_AMPA[~pyramidal_mask] = 0.  # inhibitory neurons won't feed AMPA-mediated synapses
     ip_AMPA = (V_drive - V_E) * C_k * s_AMPA
     ic_AMPA = g_AMPA * (W @ ip_AMPA)
 
     # AMPA_ext
-    g_AMPA_ext = np.array([g_AMPA_ext_E]* (p+1) + [g_AMPA_ext_I])
+#     g_AMPA_ext = np.array([g_AMPA_ext_E]* (p+1) + [g_AMPA_ext_I])
     s_AMPA_ext = np.full_like(
         s_AMPA,
         tau_AMPA * rate_ext
@@ -175,17 +341,17 @@ def run_trial(
     ic_AMPA_ext = g_AMPA_ext * ip_AMPA_ext
 
     # GABA
-    g_GABA = np.array([g_GABA_E]* (p+1) + [g_GABA_I])
+#     g_GABA = np.array([g_GABA_E]* (p+1) + [g_GABA_I])
     s_GABA = tau_GABA * nu
     s_GABA[pyramidal_mask] = 0.
     ip_GABA = (V_drive - V_I) * C_k * s_GABA
     ic_GABA = g_GABA * (W @  ip_GABA)
 
     # NMDA - requires self-consistent calculation
-    g_NMDA = np.array([g_NMDA_E]* (p+1) + [g_NMDA_I])
+#     g_NMDA = np.array([g_NMDA_E]* (p+1) + [g_NMDA_I])
     # can I speed these up with @numba.jit?
-    g_NMDA_eff = lambda V: g_NMDA * J_2(V)
-    V_E_eff = lambda V: V - (1 / J_2(V)) * (V - V_E) / J(V)
+#     g_NMDA_eff = lambda V: g_NMDA * J_2(V)
+#     V_E_eff = lambda V: V - (1 / J_2(V)) * (V - V_E) / J(V)
 
     s_NMDA = psi(nu)
     s_NMDA[~pyramidal_mask] = 0.
@@ -215,6 +381,7 @@ def run_trial(
     s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
     I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
     theta_tracked = np.full((p+2, times.shape[0]), np.nan)
+    reward_tracked = np.full((1, times.shape[0]), np.nan)  # only one reward signal
     e_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
     W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
     
@@ -222,7 +389,7 @@ def run_trial(
         W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
     
     if theta is None:
-        theta = nu ** 2  # or None
+        theta = nu
     ic_noise = np.zeros_like(s_AMPA)
     e = np.zeros_like(W)
     reward = 0.
@@ -259,13 +426,22 @@ def run_trial(
             
         
         I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA + ic_noise
-        dnu_dt_now = dnu_dt(
-            nu, I_syn,
-            sigma=sigma,
-            g_m=g_m,
-            tau_m=tau_m,
-            tau_rp=tau_rp
-        )
+        if use_phi_fitted:
+            dnu_dt_now = dnu_dt_fitted(
+                nu, I_syn,
+                sigma=sigma,
+                g_m=g_m,
+                tau_m=tau_m,
+                tau_rp=tau_rp
+            )
+        else:
+            dnu_dt_now = dnu_dt(
+                nu, I_syn,
+                sigma=sigma,
+                g_m=g_m,
+                tau_m=tau_m,
+                tau_rp=tau_rp
+            )
         dic_noise_dt_now = dic_noise_dt(ic_noise)
         ds_NMDA_dt_now = ds_NMDA_dt(s_NMDA, nu)
         ds_AMPA_dt_now = ds_AMPA_dt(s_AMPA, nu)
@@ -275,15 +451,24 @@ def run_trial(
         if plasticity:
             dtheta_dt_now = dtheta_dt(
                 theta, nu,
-                **weight_plasticity_params
+                plasticity_params=plasticity_params
+#                 **weight_plasticity_params
+            )
+            F_val = F_full(
+                nu=nu, W=W, theta=theta,
+                plasticity_params=plasticity_params
             )
             de_dt_now = de_dt(
-                W, e, nu, theta,
-                **weight_plasticity_params
+                W=W, eligibility_trace=e, nu=nu,
+                theta=theta, F_val=F_val,
+                plasticity_params=plasticity_params
+#                 **weight_plasticity_params
             )
             dW_dt_now = dW_dt(
-                W, e, nu, reward, theta,
-                **weight_plasticity_params
+                W=W, eligibility_trace=e, nu=nu,
+                reward=reward, theta=theta, F_val=F_val,
+                plasticity_params=plasticity_params
+#                 **weight_plasticity_params
             )
             
         nu += dnu_dt_now * defaultdt
@@ -299,11 +484,17 @@ def run_trial(
             W += dW_dt_now * defaultdt
             W = W.clip(0.0, 3.5) # np.inf)  # upper bound chosen for stability
             
+        # TODO: for fitness, return some default or penalised score??
+        if np.any(np.isnan(nu)) or np.any(np.isnan(W)):
+            # break before storing the NaNs
+            break
+            
         nu_tracked[:, itr] = nu
         s_NMDA_tracked[:, itr] = s_NMDA
         s_AMPA_tracked[:, itr] = s_AMPA
         s_GABA_tracked[:, itr] = s_GABA
         I_syn_tracked[:, itr] = I_syn
+        reward_tracked[:, itr] = reward
         
         if plasticity:
             theta_tracked[:, itr] = theta
@@ -313,10 +504,6 @@ def run_trial(
         # Not mentioned in W&W2006:
         V_SS = V_L - I_syn / g_m
         V_avg = V_SS - (V_thr-V_reset)*nu*tau_m - (V_SS-V_reset)*nu*tau_rp
-
-        # TODO: for fitness, return some default or penalised score??
-        if np.any(np.isnan(nu)):
-            break
     
     return_dict = dict(
         times=times,
@@ -327,15 +514,7 @@ def run_trial(
         I_syn=I_syn_tracked,
         theta=theta_tracked,
         e=e_tracked,
-        W=W_tracked
+        W=W_tracked,
+        reward=reward_tracked
     )
     return return_dict
-#     return  times,\
-#         nu_tracked,\
-#         s_NMDA_tracked,\
-#         s_AMPA_tracked,\
-#         s_GABA_tracked,\
-#         I_syn_tracked,\
-#         theta_tracked,\
-#         e_tracked,\
-#         W_tracked
