@@ -43,17 +43,15 @@ def J_2(V):
         result[i] = numerator / denominator
     return result
 
-# g_NMDA_eff = lambda V: g_NMDA * J_2(V)
 @jit(nopython=True)
 def g_NMDA_eff(V):
     return g_NMDA * J_2(V)
     
-# V_E_eff = lambda V: V - (1 / J_2(V)) * (V - V_E) / J(V)
 @jit(nopython=True)
 def V_E_eff(V):
     return V - (1 / J_2(V)) * (V - V_E) / J(V)
 
-# Functions to compute steady-state NMDA channels
+#region Functions to compute steady-state NMDA channels
 @jit(nopython=True)
 def my_factorial(n):
     if n <= 1.:
@@ -123,9 +121,9 @@ def psi_scipy(nu, n_truncate=5):
         summand_coeff = ((-alpha * tau_NMDA_rise)**n) / special.factorial(n+1)
         summation += summand_coeff * _get_Tn_scipy(n, nu)
     return coeff * (1 + summation / (1 + nu * tau_NMDA))
+#endregion
 
-
-# Firing rate functions
+#region Firing rate functions
 @jit(nopython=True)
 def _rate_upperbound_vectorised(
     V_SS, sigma, tau_m, tau_rp,
@@ -178,15 +176,15 @@ def phi(
     return rate_vectorised(V_SS, sigma, tau_m, tau_rp)
 
 
-c=310.*1e9
-I=125.
-g=0.16
+c_default = 310.*1e9
+I_default = 125.
+g_default = 0.16
 @jit(nopython=True)
 def phi_fit(
     I_syn,
-    c=c,
-    I=I,
-    g=g
+    c=c_default,
+    I=I_default,
+    g=g_default
 ):
     numerator = c * (-I_syn) - I
     denominator = 1 - np.exp(-g*(numerator))
@@ -220,8 +218,11 @@ def phi_fit_I(I_syn, sigma=None):
     rates = phi_fit(I_syn, c_I, I_I, g_I)
     rates[rates > max_rate_I] = max_rate_I
     return rates
+#endregion
 
-# Euler derivative updates
+#region Euler derivative updates
+
+#region activity variables
 # @jit(nopython=True)  # faster without jit for now
 def ds_NMDA_dt(s_NMDA, nu):
     psi_nu = psi(nu)
@@ -232,9 +233,12 @@ def ds_NMDA_dt(s_NMDA, nu):
 
 # @jit(nopython=True)
 def dic_noise_dt(
-    ic_noise, sigma_noise=7e-12#*5/p
+    ic_noise,
+    sigma_noise=7e-12, # should this scale with number of populations?
+    randomstate=random_state_default
 ):
-    eta = np.random.randn(*ic_noise.shape)
+    # eta = np.random.randn(*ic_noise.shape)
+    eta = randomstate.randn(*ic_noise.shape)
     dicdt = (-ic_noise + eta * np.sqrt(tau_AMPA/defaultdt) * sigma_noise) / tau_AMPA
     return dicdt
 
@@ -271,22 +275,123 @@ def ds_GABA_dt(s_GABA, nu):
     deriv = -s_GABA/tau_GABA + nu
     deriv[pyramidal_mask] = 0.0
     return deriv
+#endregion
     
 
-# Learning rule functions
-tau_theta = 0.1
+#region plasticity variables
+# TODO: test
 @jit(nopython=True)
-def dtheta_BCM_dt(theta, nu):
+def F_full(nu, W, theta, plasticity_params):
+    # crudely coded
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+    
+    nu = nu.reshape(-1,1)  # make sure it's a column
+    theta = theta.reshape(-1, 1)
+    theta_cast = theta @ np.ones_like(theta).T
+    theta_cast_p = theta_cast**p_theta
+    ones_vec = np.ones_like(nu)
+    result = np.zeros_like(W)
+        
+    result += (xi_10_0 + xi_10_1 * theta_cast_p) * (nu @ ones_vec.T)
+    result += (xi_01_0 + xi_01_1 * theta_cast_p) * (ones_vec @ nu.T)
+    result += (xi_11_0 + xi_11_1 * theta_cast_p) * (nu @ nu.T)
+    result += (xi_20_0 + xi_20_1 * theta_cast_p) * ((nu**2) @ ones_vec.T)
+    result += (xi_21_0 + xi_21_1 * theta_cast_p) * ((nu**2) @ nu.T)
+    result += (xi_02_0 + xi_02_1 * theta_cast_p) * (ones_vec @ (nu.T**2))
+    result += (xi_12_0 + xi_12_1 * theta_cast_p) * (nu @ (nu.T**2))
+    result *= ((w_max_default - W)*W)**mu
+    result += xi_00 * (theta_cast**p_const) * W
+    return result
+
+## not used:
+# tau_theta = 0.1
+# @jit(nopython=True)
+# def dtheta_BCM_dt(theta, nu):
+#     """
+#     tau_theta * dtheta/dt = -theta + nu**2
+    
+#     Units of theta are technically different to those of nu. 
+#     There should be a constant to fix this.
+#     """
+#     dtheta_dt = (-theta + nu**2)/tau_theta
+#     return dtheta_dt
+
+# @jit(nopython=True)
+def dtheta_dt(
+    theta, nu,
+    plasticity_params,
+    **kwargs
+):
     """
+    Threshold for the BCM-rule.
+    
     tau_theta * dtheta/dt = -theta + nu**2
     
     Units of theta are technically different to those of nu. 
     There should be a constant to fix this.
     """
-    dtheta_dt = (-theta + nu**2)/tau_theta
-    return dtheta_dt
+    if theta is None:
+        return None
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+    dtheta_dt_now = (-theta + nu)/tau_theta
+    return dtheta_dt_now
 
-tau_W = 10.  # TODO: move to parameters.py
+# TODO: refactor so that F_val is given
+# @jit(nopython=True)
+def de_dt(
+    W, eligibility_trace, nu,
+    plasticity_params,
+    theta=None,
+    F_val=None,
+    **kwargs
+):
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+    if F_val is None:
+        F_val = F_full(nu, W, theta, plasticity_params)
+    tau_de_dt = -eligibility_trace + F_val
+    return tau_de_dt / tau_e
+
+
+# TODO: refactor so that F_val is given
+# @jit(nopython=True)
+def dW_dt(
+    W, eligibility_trace, nu, reward,
+    plasticity_params,
+    theta=None,
+    F_val=None,
+    **kwargs
+):
+    p_const, p_theta, mu, tau_theta, xi_00, \
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
+    xi_12_0, xi_12_1, tau_e, beta = plasticity_params
+    if F_val is None:
+        if beta > 0.:
+            F_val = F_full(nu, W, theta, plasticity_params)
+        else:
+            F_val = 0.0
+    tau_dw_dt = (1-beta)*eligibility_trace*reward + beta*F_val
+    return tau_dw_dt  # / tau_w  # tau_w is redundant
+
+#endregion
+
+@jit(nopython=True)
+def dR_dt_default(reward, tau_reward=tau_reward_default):
+    dR_dt_now = -reward/tau_reward
+    return dR_dt_now
+
+
+#endregion
+
 @jit(nopython=True)
 def dW_dt_BCM(W, nu, theta):
     dW_dt = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1)) / tau_W
@@ -316,7 +421,7 @@ def get_weights(w_plus=w_plus, p=p, f=f, w_minus=w_minus):
         W[:,i] = weights
     return W
 
-
+# TODO: remove this, it's obsolete
 def simulate_original(
     initialisation_steps=10,
     lambda_=0.8,
@@ -335,12 +440,13 @@ def simulate_original(
     """
     ## Initialise arrays for computation
     # For some reason this can't be numba.jit-ed
-    C_k = np.array([N_non] + [N_sub] * p + [N_I])
-    g_m = np.array([g_m_E] * (p+1) + [g_m_I])
-    C_m = np.array([C_m_E] * (p+1) + [C_m_I])
-    tau_m = np.array([tau_m_E] * (p+1) + [tau_m_I])
-    tau_rp = np.array([tau_rp_E] * (p+1) + [tau_rp_I])
-    nu = np.array([rate_pyramidal] * (p+1) + [rate_interneuron])
+    # C_k = np.array([N_non] + [N_sub] * p + [N_I])
+    # g_m = np.array([g_m_E] * (p+1) + [g_m_I])
+    # C_m = np.array([C_m_E] * (p+1) + [C_m_I])
+    # tau_m = np.array([tau_m_E] * (p+1) + [tau_m_I])
+    # tau_rp = np.array([tau_rp_E] * (p+1) + [tau_rp_I])
+    # nu = np.array([rate_pyramidal] * (p+1) + [rate_interneuron])
+    nu = nu_initial
     
     # set weights
     if W is None:

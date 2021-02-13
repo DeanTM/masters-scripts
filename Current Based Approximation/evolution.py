@@ -1,11 +1,76 @@
 from simulation import *
 
-nolearn_genome = [
-    0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
-    0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,0.
-]
+# Extending the evolutionary algorithm for my own purposes
+# such as tracking values and checkpointing
+# Note: it's still the case that individual scripts will need
+# to specify some functionality, like `dask_map`
+from deap import cma
 
-# Functions for handling the genomes
+#region Classes for the evolutionary algorithm
+class Genome(list):
+    """
+    A genome which has it's own RandomState for parallelisation.
+
+    The .randomstate is assigned upon generation by the CMA-ES.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.randomstate = None
+
+
+# TODO: implement checkpointing
+class CMAStrategy(cma.Strategy):
+    def __init__(
+        self,
+        *args,
+        store_centroids=False,
+        store_covariances=False,
+        track_fitnesses=False,
+        **kwargs
+        ):
+        super().__init__(*args, **kwargs)
+        # one random state for each individual
+        self.randomstates = [RandomState() for i in range(self.lambda_)]
+        self.store_centroids = store_centroids
+        self.store_covariances = store_covariances
+        self.stored_centroids = None
+        self.stored_covariances = None
+        self.fitness_max = None
+        self.fitness_min = None
+        self.track_fitnesses = track_fitnesses
+
+        if self.store_centroids:
+            self.stored_centroids = [self.centroid]
+        if self.store_covariances:
+            self.stored_covariances = [self.C]  # I hope this is covariance!!
+        if self.track_fitnesses:
+            # from these lists we can compute the max and min so far
+            self.fitness_max = []
+            self.fitness_min = []
+    
+    def generate(self, ind_init):
+        population = super().generate(ind_init)
+        for i in range(self.lambda_):
+            population[i].randomstate = self.randomstates[i]
+        return population
+    
+    def update(self, population):
+        super().update(population)
+        if self.store_centroids:
+            self.stored_centroids.append(self.centroid)
+        if self.store_covariances:
+            self.stored_covariances.append(self.C)
+        if self.track_fitnesses:
+            sorted_population = sorted(
+                population,
+                key=lambda x:x.fitness.values
+                )
+            self.fitness_max.append(sorted_population[-1])
+            self.fitness_min.append(sorted_population[0])
+#endregion
+
+
+#region Functions for handling the genomes
 @jit(nopython=True)
 def sigmoid(x):
     return 1./(1+np.exp(-x))
@@ -37,14 +102,16 @@ def get_params_from_genome(genome):
     params[-2] = tau_e
     params[-1] = beta
     return params
-    
+#endregion
+
 
 def run_repeated_trial(
     W_initial, plasticity_params,
     trial_func, n_runs,
     verbose=False,
     nan_verbose=False,
-    seed=None
+    seed=None,
+    randomstate=random_state_default
 ):
     W = W_initial
     theta = None
@@ -59,7 +126,8 @@ def run_repeated_trial(
             W=W,
             theta=theta,
             plasticity_params=plasticity_params,
-            seed=seed
+            seed=seed,
+            randomstate=randomstate
         )
         W = results_dict["W"][:, :, -1]
         theta = results_dict["theta"][:, -1]
@@ -70,38 +138,49 @@ def run_repeated_trial(
             for k, v in results_dict.items():
                 full_results_dict[k].append(v)
         # stop repeating if weights are NaN
-        if np.any(np.isnan(W)):
+        nu = results_dict["nu"][:, -1]
+        if np.any(np.isnan(W)) or np.any(np.isnan(nu)):
             if nan_verbose:
                 print(f"NaN encountered in trial {i+1}/{n_runs}")
-                # print(
-                #     "Params: ",
-                #     *get_param_dict(plasticity_params).items(),
-                #     sep='  '
-                #     )
             break
     return full_results_dict
 
 
-# def run_multiple_restarts_repeated_trial(
+def get_reward_from_results(
+    results_dict,
+    n_runs=0,  # used for penalty
+    penalty=0.  # subtracted for each numerically failed run
+):
+    reward = penalty * (len(results_dict['reward'])-n_runs)
+    for rew_array in results_dict['reward']:
+            if not np.any(np.isnan(rew_array)):
+                # scale rewards by timestep size for rectangular 
+                # integral of reward trace
+                reward += np.sum(rew_array) * defaultdt 
+            else:
+                reward -= penalty
+    return reward 
+
+# def get_fitness(
 #     W_initial, plasticity_params,
-#     trial_func, n_runs, n_multiples,
-#     verbose=False,
-#     seed=None
+#     trial_func,
+#     n_runs,
+#     n_multiples,
+#     verbose_=False,
+#     randomstate=random_state_default
 # ):
-#     # results dict has form:
-#     # key=variable_name, value=[variable_array]
-
-#     # parallelisation will be done across individuals
-#     all_results = []
 
 
-        
+
+
+# not used in run_evolution.py
 def get_fitness(
     W_initial, plasticity_params,
     trial_func,
     n_runs,
     n_multiples,
-    verbose=False
+    verbose=False,
+    randomstate=random_state_default
 ):
     fitness = 0.0
     for i in range(n_multiples):
@@ -111,9 +190,9 @@ def get_fitness(
             trial_func=trial_func,
             n_runs=n_runs,
             verbose=verbose,
-            seed=i
+            seed=i,  # TODO: factor out seeds
+            randomstate=randomstate
         )
-#         fitness += np.sum(results_dict['reward'])
         for rew_array in results_dict['reward']:
             if not np.any(np.isnan(rew_array)):
                 fitness += np.sum(rew_array)
