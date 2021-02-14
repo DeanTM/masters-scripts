@@ -5,6 +5,17 @@ from brian2 import np, plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from matplotlib.patches import Rectangle
 
+from datetime import datetime
+from os import path, mkdir
+import json
+
+script_running_datetime = datetime.now()
+folder_prefix = path.join(path.join('experiments', str(script_running_datetime)))
+imagedir = path.join(folder_prefix, 'images_and_animations')
+paramsdir = path.join(folder_prefix, 'parameters')
+paramsfile = path.join(paramsdir, 'experiment_parameters.json')
+namespacefile = path.join(paramsdir, 'experiment_namespace.json')
+
 
 def plot_average_membrane_potential(
     axes, population='E_non', group='non-selective',
@@ -82,7 +93,7 @@ def plot_average_membrane_potential(
 def run_model(
     N=N, p=p, f=f, N_E=N_E, N_I=N_I, w_plus=w_plus, w_minus=w_minus,
     N_sub=N_sub, N_non=N_non, C_ext=C_ext, C_E=C_E, C_I=C_I,
-    namespace=namespace,
+    namespace=namespace, net=None,
     use_conductance=True,
     **namespace_kwargs  # use for repeated simulations?
 ):
@@ -90,147 +101,148 @@ def run_model(
     Code taken primarily from
     https://brian2.readthedocs.io/en/stable/examples/frompapers.Brunel_Wang_2001.html
     """
-    b2.start_scope()
-    s_AMPA_initial_ext = namespace['rate_ext'] * C_ext * namespace['tau_AMPA']
+    if net is None:
+        b2.start_scope()
+        s_AMPA_initial_ext = namespace['rate_ext'] * C_ext * namespace['tau_AMPA']
 
-    # update namespace with computed variables
-    namespace['tau_m_E'] = namespace['C_m_E'] / namespace['g_m_E']
-    namespace['tau_m_I'] = namespace['C_m_I'] / namespace['g_m_I']
+        # update namespace with computed variables
+        namespace['tau_m_E'] = namespace['C_m_E'] / namespace['g_m_E']
+        namespace['tau_m_I'] = namespace['C_m_I'] / namespace['g_m_I']
 
 
-    P_E = b2.NeuronGroup(
-        N_E,
-        eqs_conductance_E if use_conductance else eqs_current_E,
-        threshold='v > V_thr',
-        reset='v = V_reset',
-        refractory='tau_rp_E',
-        method='euler',
-        name='P_E'
-    )
-    P_E.v = namespace['V_L']
-    P_E.s_AMPA_ext = s_AMPA_initial_ext  # estimated 4.8
-
-    P_I = b2.NeuronGroup(
-        N_E,
-        eqs_conductance_I if use_conductance else eqs_current_I,
-        threshold='v > V_thr',
-        reset='v = V_reset',
-        refractory='tau_rp_I',
-        method='euler',
-        name='P_I'
-    )
-    P_I.v = namespace['V_L']
-    P_I.s_AMPA_ext = s_AMPA_initial_ext
-
-    C_E_E = b2.Synapses(
-        P_E, P_E,
-        model=eqs_glut,  # equations for NMDA
-        on_pre=eqs_pre_glut,
-        on_post=eqs_post_glut,
-        method='euler',
-        name='C_E_E'
+        P_E = b2.NeuronGroup(
+            N_E,
+            eqs_conductance_E if use_conductance else eqs_current_E,
+            threshold='v > V_thr',
+            reset='v = V_reset',
+            refractory='tau_rp_E',
+            method='euler',
+            name='P_E'
         )
-    C_E_E.connect('i != j')
-    C_E_E.w[:] = 1.0
+        P_E.v = namespace['V_L']
+        P_E.s_AMPA_ext = s_AMPA_initial_ext  # estimated 4.8
 
-    for pi in range(N_non, N_non+p*N_sub, N_sub):
-        # internal other subpopulation to current nonselective
-        # brian synapses are i->j
-        C_E_E.w[C_E_E.indices[:, pi:pi+N_sub]] = w_minus
-        # internal current subpopulation to current subpopulation
-        C_E_E.w[C_E_E.indices[pi:pi + N_sub, pi:pi + N_sub]] = w_plus
-    
-    C_E_I = b2.Synapses(
-        P_E, P_I,
-        model=eqs_glut,
-        on_pre=eqs_pre_glut,
-        on_post=eqs_post_glut,
-        method='euler',
-        name='C_E_I'
-    )
-    C_E_I.connect()
-    C_E_I.w[:] = 1.0
-
-    C_I_I = b2.Synapses(
-        P_I, P_I,
-        on_pre=eqs_pre_gaba,
-        method='euler',
-        name='C_I_I'
-    )
-    C_I_I.connect('i != j')
-
-    C_I_E = b2.Synapses(
-        P_I, P_E,
-        on_pre=eqs_pre_gaba,
-        method='euler',
-        name='C_I_E'
+        P_I = b2.NeuronGroup(
+            N_E,
+            eqs_conductance_I if use_conductance else eqs_current_I,
+            threshold='v > V_thr',
+            reset='v = V_reset',
+            refractory='tau_rp_I',
+            method='euler',
+            name='P_I'
         )
-    C_I_E.connect()
+        P_I.v = namespace['V_L']
+        P_I.s_AMPA_ext = s_AMPA_initial_ext
 
-    C_P_E = b2.PoissonInput(
-        P_E,
-        target_var='s_AMPA_ext',
-        N=C_ext,
-        rate=namespace['rate_ext'],
-        weight=1.
-    )
-    C_P_I = b2.PoissonInput(
-        P_I,
-        target_var='s_AMPA_ext',
-        N=C_ext,
-        rate=namespace['rate_ext'],
-        weight=1.
-    )
-
-    # TODO: change the stimulus to match the task
-    C_selection = int(f * C_ext)
-    rate_selection = 25. * b2.Hz
-    if 'stimulus1' not in namespace:
-        stimtimestep = 25 * b2.ms
-        stimtime = 1
-        stimuli1 = b2.TimedArray(np.r_[
-            np.zeros(8), np.ones(stimtime), np.zeros(100)],
-            dt=stimtimestep
+        C_E_E = b2.Synapses(
+            P_E, P_E,
+            model=eqs_glut,  # equations for NMDA
+            on_pre=eqs_pre_glut,
+            on_post=eqs_post_glut,
+            method='euler',
+            name='C_E_E'
             )
-        namespace['stimuli1'] = stimuli1
-    input1 = b2.PoissonInput(
-        P_E[N_non:N_non + N_sub],
-        target_var='s_AMPA_ext',
-        N=C_selection,
-        rate=rate_selection,
-        weight='stimuli1(t)'
-    )
+        C_E_E.connect('i != j')
+        C_E_E.w[:] = 1.0
 
-    N_activity_plot = 15  # number of neurons to rasterplot
-    # spike monitors
-    sp_E_sels = [
-    b2.SpikeMonitor(P_E[pi:pi + N_activity_plot], name=f'sp_E_{int((pi-N_non)/N_sub) + 1}')
-        for pi in range(N_non, N_non + p * N_sub, N_sub)
-    ]
-    sp_E = b2.SpikeMonitor(P_E[:N_activity_plot], name=f'sp_E_non')
-    sp_I = b2.SpikeMonitor(P_I[:N_activity_plot], name=f'sp_I')
-    # rate monitors
-    r_E_sels = [
-        b2.PopulationRateMonitor(P_E[pi:pi + N_sub], name=f'r_E_{int((pi-N_non)/N_sub) + 1}')
-        for pi in range(N_non, N_non + p * N_sub, N_sub)]
-    r_E = b2.PopulationRateMonitor(P_E[:N_non], name=f'r_E_non')
-    r_I = b2.PopulationRateMonitor(P_I, name=f'r_I')
-    # state monitors
-    st_E_sels = [
-        b2.StateMonitor(P_E[pi:pi + N_activity_plot], variables=True, record=True,
-                    name=f'st_E_{int((pi-N_non)/N_sub) + 1}')
-        for pi in range(N_non, N_non + p * N_sub, N_sub)]
-    st_E = b2.StateMonitor(P_E[:N_activity_plot], variables=True, record=True, name=f'st_E_non')
-    st_I = b2.StateMonitor(P_I[:N_activity_plot], variables=True, record=True, name=f'st_I')
+        for pi in range(N_non, N_non+p*N_sub, N_sub):
+            # internal other subpopulation to current nonselective
+            # brian synapses are i->j
+            C_E_E.w[C_E_E.indices[:, pi:pi+N_sub]] = w_minus
+            # internal current subpopulation to current subpopulation
+            C_E_E.w[C_E_E.indices[pi:pi + N_sub, pi:pi + N_sub]] = w_plus
+        
+        C_E_I = b2.Synapses(
+            P_E, P_I,
+            model=eqs_glut,
+            on_pre=eqs_pre_glut,
+            on_post=eqs_post_glut,
+            method='euler',
+            name='C_E_I'
+        )
+        C_E_I.connect()
+        C_E_I.w[:] = 1.0
 
-    net = b2.Network(b2.collect())
-    # add lists of monitors independently because
-    # `b2.collect` doesn't search nested objects
-    net.add(sp_E_sels)
-    net.add(r_E_sels)
-    net.add(st_E_sels)
+        C_I_I = b2.Synapses(
+            P_I, P_I,
+            on_pre=eqs_pre_gaba,
+            method='euler',
+            name='C_I_I'
+        )
+        C_I_I.connect('i != j')
 
-    net.store('initialised')
+        C_I_E = b2.Synapses(
+            P_I, P_E,
+            on_pre=eqs_pre_gaba,
+            method='euler',
+            name='C_I_E'
+            )
+        C_I_E.connect()
+
+        C_P_E = b2.PoissonInput(
+            P_E,
+            target_var='s_AMPA_ext',
+            N=C_ext,
+            rate=namespace['rate_ext'],
+            weight=1.
+        )
+        C_P_I = b2.PoissonInput(
+            P_I,
+            target_var='s_AMPA_ext',
+            N=C_ext,
+            rate=namespace['rate_ext'],
+            weight=1.
+        )
+
+        # TODO: change the stimulus to match the task
+        C_selection = int(f * C_ext)
+        rate_selection = 25. * b2.Hz
+        if 'stimulus1' not in namespace:
+            stimtimestep = 25 * b2.ms
+            stimtime = 1
+            stimuli1 = b2.TimedArray(np.r_[
+                np.zeros(8), np.ones(stimtime), np.zeros(100)],
+                dt=stimtimestep
+                )
+            namespace['stimuli1'] = stimuli1
+        input1 = b2.PoissonInput(
+            P_E[N_non:N_non + N_sub],
+            target_var='s_AMPA_ext',
+            N=C_selection,
+            rate=rate_selection,
+            weight='stimuli1(t)'
+        )
+
+        N_activity_plot = 15  # number of neurons to rasterplot
+        # spike monitors
+        sp_E_sels = [
+        b2.SpikeMonitor(P_E[pi:pi + N_activity_plot], name=f'sp_E_{int((pi-N_non)/N_sub) + 1}')
+            for pi in range(N_non, N_non + p * N_sub, N_sub)
+        ]
+        sp_E = b2.SpikeMonitor(P_E[:N_activity_plot], name=f'sp_E_non')
+        sp_I = b2.SpikeMonitor(P_I[:N_activity_plot], name=f'sp_I')
+        # rate monitors
+        r_E_sels = [
+            b2.PopulationRateMonitor(P_E[pi:pi + N_sub], name=f'r_E_{int((pi-N_non)/N_sub) + 1}')
+            for pi in range(N_non, N_non + p * N_sub, N_sub)]
+        r_E = b2.PopulationRateMonitor(P_E[:N_non], name=f'r_E_non')
+        r_I = b2.PopulationRateMonitor(P_I, name=f'r_I')
+        # state monitors
+        st_E_sels = [
+            b2.StateMonitor(P_E[pi:pi + N_activity_plot], variables=True, record=True,
+                        name=f'st_E_{int((pi-N_non)/N_sub) + 1}')
+            for pi in range(N_non, N_non + p * N_sub, N_sub)]
+        st_E = b2.StateMonitor(P_E[:N_activity_plot], variables=True, record=True, name=f'st_E_non')
+        st_I = b2.StateMonitor(P_I[:N_activity_plot], variables=True, record=True, name=f'st_I')
+
+        net = b2.Network(b2.collect())
+        # add lists of monitors independently because
+        # `b2.collect` doesn't search nested objects
+        net.add(sp_E_sels)
+        net.add(r_E_sels)
+        net.add(st_E_sels)
+
+        net.store('initialised')
 
     # runtime=runtime*b2.second
     net.restore('initialised')
@@ -244,20 +256,44 @@ def run_model(
 
 
 if __name__ == '__main__':
+    # Create folders and files
+    namespace_nounits = dict(zip(
+        namespace.keys(),
+        map(lambda v: b2.array(v).item(), namespace.values())
+        ))
+    if not path.exists(folder_prefix):
+        mkdir(folder_prefix)
+    if not path.exists(imagedir):
+        mkdir(imagedir)
+    if not path.exists(paramsdir):
+        mkdir(paramsdir)
+    with open(paramsfile, 'w') as fp:
+        json.dump(parameters_shared_dict, fp)
+    with open(namespacefile, 'w') as fp:
+        json.dump(namespace_nounits, fp)
+    
+
+
     # Plot results
     V_drive_vals = [-55.*b2.mV, namespace['V_drive'], None]
     use_conductance_bools = [False, False, True]
     fig, axes = plt.subplots(3, 2, figsize=(12, 12))
-    # for V_drive, use_conductance in zip(V_drive_vals, use_conductance_bools):
+
+    net = None
     for k in range(3):
         use_conductance = use_conductance_bools[k]
         V_drive = V_drive_vals[k]
         namespace_copy = dict(namespace)
         namespace_copy['V_drive'] = V_drive
 
+        if k == 2:
+            # reset for conductance model
+            net = None
+
         net, namespace_copy = run_model(
             use_conductance=use_conductance,
-            namespace=namespace_copy
+            namespace=namespace_copy,
+            net=None
         )
         st_E = net['st_E_non']
         v = st_E.v.reshape(-1) / b2.mV
@@ -300,7 +336,7 @@ if __name__ == '__main__':
         if k == 0:
             axes[k,1].set_title(f'Firing Rate of Selected Population (Hz)\nsmoothed over {smoothing_window/b2.ms}ms')
         axes[k,1].grid(alpha=0.1)
-    plt.savefig(f'conductance_current_comparison.png')
+    plt.savefig(path.join(imagedir,'conductance_current_comparison.png'))
     plt.show()
 
 
@@ -366,5 +402,7 @@ if __name__ == '__main__':
     axes[1].add_patch(rectangle_patch)
 
     fig.subplots_adjust(wspace=0.05)
-    plt.savefig(f'average-membrane-potential-comparison_conductance_{use_conductance}.png')
+    plt.savefig(path.join(
+        imagedir, f'average-membrane-potential-comparison_conductance_{use_conductance}.png'
+        ))
     plt.show()

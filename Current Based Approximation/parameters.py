@@ -4,14 +4,16 @@ from numpy.random import MT19937, RandomState, SeedSequence
 
 #region Simulation and Function Params
 # too small, and the reward doesn't fully accumulate
-defaultdt = 0.5e-3 # 0.05 * 1e-3
+# defaultdt = 0.05e-3  
+# defaultdt = 0.1e-3
+defaultdt = 0.25e-3
 
-V_avg_initial = -56e-3
+
 V_L = -70. * 1e-3
 V_thr = -50. * 1e-3
 V_reset = -55. * 1e-3
-V_E = 0. * 1e-3  # shouldn't be used
-V_I = -70 * 1e-3  # shouldn't be used
+V_E = 0. * 1e-3
+V_I = -70 * 1e-3
 V_drive = -47.5 * 1e-3
 V_avg_initial = -52.5 * 1e-3  # is this needed?
 g_AMPA_ext_E = 2.08 * 1e-9 * 0.5
@@ -38,7 +40,9 @@ g_m_E = 25. * 1e-9
 g_m_I = 20. * 1e-9
 tau_m_E = C_m_E / g_m_E
 tau_m_I = C_m_I / g_m_I
-rate_ext = 3.
+
+# synaptic noise
+sigma_noise=7e-12 # should this scale with number of populations?
 
 # firing rate dynamics time constant
 tau_rate = 2e-3
@@ -96,19 +100,88 @@ BCM_parameters = (
     0.,0., 0.0337*0.0168, 0.,0.,0.,
     0.,0.,1.,1.
 )
+# nolearn_parameters = (
+#     0.,1.,0.5,100.,0.,
+#     0.,0.,0.,0.,0.,0.,
+#     0.,0.,0.,0.,0.,0.,
+#     0.,0.,100.,0.5
+# )
+
+# decrease beta to reward-only learning
 nolearn_parameters = (
     0.,1.,0.5,100.,0.,
     0.,0.,0.,0.,0.,0.,
     0.,0.,0.,0.,0.,0.,
-    0.,0.,100.,0.5
+    0.,0.,100.,0.
 )
 #endregion
 
 #region Evolution Params
+# nolearn_genome = [
+#     0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
+#     0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,0.
+# ]
+
+# decrease beta to reward-only learning
 nolearn_genome = [
     0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
-    0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,0.
+    0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,-10.
 ]
 
-
 #endregion
+
+# param dict for reference
+parameters_dict = dict(
+    N=N,
+    N_E=N_E,
+    N_I=N_I,
+    f=f,
+    p=p,
+    N_sub=N_sub,
+    N_non=N_non,
+    w_plus=w_plus,
+    w_minus=w_minus,
+    C_ext=C_ext,
+    C_E=C_E,
+    C_I=C_I,
+    rate_ext=rate_ext,
+    runtime=runtime,
+    defaultdt=defaultdt,
+    V_L=V_L,
+    V_thr=V_thr,
+    V_E=V_E,
+    V_I=V_I,
+    V_drive=V_drive,
+    V_avg_initial=V_avg_initial,
+    g_AMPA_ext_E=g_AMPA_ext_E,
+    g_AMPA_rec_E=g_AMPA_rec_E,
+    g_AMPA_ext_I=g_AMPA_ext_I,
+    g_AMPA_rec_I=g_AMPA_rec_I,
+    tau_AMPA=tau_AMPA,
+    g_NMDA_E=g_NMDA_E,
+    g_NMDA_I=g_NMDA_I,
+    tau_NMDA_rise=tau_NMDA_rise,
+    tau_NMDA_decay=tau_NMDA_decay,
+    alpha=alpha,
+    tau_NMDA=tau_NMDA,
+    gamma_JahrStevens=gamma_JahrStevens,
+    beta_JahrStevens=beta_JahrStevens,
+    g_GABA_E=g_GABA_E,
+    g_GABA_I=g_GABA_I,
+    tau_GABA=tau_GABA,
+    tau_rp_E=tau_rp_E,
+    tau_rp_I=tau_rp_I,
+    C_m_E=C_m_E,
+    C_m_I=C_m_I,
+    g_m_E=g_m_E,
+    g_m_I=g_m_I,
+    tau_m_E=tau_m_E,
+    tau_m_I=tau_m_I,
+    sigma_noise=sigma_noise,
+    tau_rate=tau_rate,
+    rate_interneuron=rate_interneuron,
+    rate_pyramidal=rate_pyramidal,
+    w_max_default=w_max_default,
+    mu_default=mu_default,
+    tau_reward_default=tau_reward_default
+)

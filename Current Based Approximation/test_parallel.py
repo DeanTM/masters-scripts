@@ -1,3 +1,5 @@
+# TODO: this test file is not up to date,
+# but no longer needed as parallelisation works
 from functions import *
 import matplotlib.pyplot as plt
 from time import time
@@ -31,6 +33,11 @@ parser.add_argument(
     '-p', '--plasticity',
     action='store_true'
 )
+parser.add_argument(
+    '-f', '--usefitted',
+    action='store_true'
+)
+
 
 args = parser.parse_args()
 
@@ -41,7 +48,8 @@ if __name__ == '__main__':
         for key,value in vars(args).items():
             if key not in ['savefig', 'max_threads']:
                 title_suffix += f'{key}:{value} '
-        title_suffix += f'\np:{p} w+:{w_plus}'
+        title_suffix += f'\np:{p} w+:{w_plus} fitted:{args.usefitted}'
+        
     
     sim_delayed = delayed(simulate_original)
     max_threads = args.max_threads
@@ -53,7 +61,8 @@ if __name__ == '__main__':
             sim_delayed(
                 coherence=args.coherence,
                 lambda_=args.lambda_,
-                plasticity=args.plasticity
+                plasticity=args.plasticity,
+                use_phi_fitted=args.usefitted
             ) for k in range(i)
         ]
         result = compute(computations)

@@ -47,6 +47,8 @@ class CMAStrategy(cma.Strategy):
             # from these lists we can compute the max and min so far
             self.fitness_max = []
             self.fitness_min = []
+            self.fitness_avg = []
+            self.fitness_std = []
     
     def generate(self, ind_init):
         population = super().generate(ind_init)
@@ -63,10 +65,13 @@ class CMAStrategy(cma.Strategy):
         if self.track_fitnesses:
             sorted_population = sorted(
                 population,
-                key=lambda x:x.fitness.values
+                key=lambda x:x.fitness.values[0]
                 )
-            self.fitness_max.append(sorted_population[-1])
-            self.fitness_min.append(sorted_population[0])
+            fitness_vals = [x.fitness.values[0] for x in population]
+            self.fitness_max.append(sorted_population[-1].fitness.values[0])
+            self.fitness_min.append(sorted_population[0].fitness.values[0])
+            self.fitness_avg.append(np.mean(fitness_vals))
+            self.fitness_std.append(np.std(fitness_vals))
 #endregion
 
 
@@ -74,6 +79,10 @@ class CMAStrategy(cma.Strategy):
 @jit(nopython=True)
 def sigmoid(x):
     return 1./(1+np.exp(-x))
+
+@jit(nopython=True)
+def logit(x):
+    return np.log(x / (1-x))
 
 @jit(nopython=True)
 def softplus(x):
@@ -110,7 +119,6 @@ def run_repeated_trial(
     trial_func, n_runs,
     verbose=False,
     nan_verbose=False,
-    seed=None,
     randomstate=random_state_default
 ):
     W = W_initial
@@ -126,7 +134,6 @@ def run_repeated_trial(
             W=W,
             theta=theta,
             plasticity_params=plasticity_params,
-            seed=seed,
             randomstate=randomstate
         )
         W = results_dict["W"][:, :, -1]
@@ -161,40 +168,30 @@ def get_reward_from_results(
                 reward -= penalty
     return reward 
 
+
+
+
+# # not used in run_evolution.py
 # def get_fitness(
 #     W_initial, plasticity_params,
 #     trial_func,
 #     n_runs,
 #     n_multiples,
-#     verbose_=False,
+#     verbose=False,
 #     randomstate=random_state_default
 # ):
-
-
-
-
-# not used in run_evolution.py
-def get_fitness(
-    W_initial, plasticity_params,
-    trial_func,
-    n_runs,
-    n_multiples,
-    verbose=False,
-    randomstate=random_state_default
-):
-    fitness = 0.0
-    for i in range(n_multiples):
-        results_dict = run_repeated_trial(
-            W_initial=W_initial,
-            plasticity_params=plasticity_params,
-            trial_func=trial_func,
-            n_runs=n_runs,
-            verbose=verbose,
-            seed=i,  # TODO: factor out seeds
-            randomstate=randomstate
-        )
-        for rew_array in results_dict['reward']:
-            if not np.any(np.isnan(rew_array)):
-                fitness += np.sum(rew_array)
-    fitness = fitness / n_multiples  # get the average across restarts
-    return fitness
+#     fitness = 0.0
+#     for i in range(n_multiples):
+#         results_dict = run_repeated_trial(
+#             W_initial=W_initial,
+#             plasticity_params=plasticity_params,
+#             trial_func=trial_func,
+#             n_runs=n_runs,
+#             verbose=verbose,
+#             randomstate=randomstate
+#         )
+#         for rew_array in results_dict['reward']:
+#             if not np.any(np.isnan(rew_array)):
+#                 fitness += np.sum(rew_array)
+#     fitness = fitness / n_multiples  # get the average across restarts
+#     return fitness

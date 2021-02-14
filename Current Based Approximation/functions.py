@@ -14,13 +14,18 @@ pyramidal_mask = np.array([True] * (p+1) + [False])
 # plasticity masks used in determining which weights to update
 plasticity_mask_source = pyramidal_mask.copy()
 plasticity_mask_target = np.full_like(plasticity_mask_source, True)
+plasticity_mask = np.outer(plasticity_mask_target, plasticity_mask_source)
 
 # sigma
-@jit(nopython=True)
-def get_sigma(lambda_=0.8):
-    sigma = np.sqrt(
-        g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * rate_ext * tau_AMPA**2 / (g_m**2 * tau_m)
+sigma_noAMPA = np.sqrt(
+    g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * tau_AMPA / (g_m**2 * tau_m)
     )
+@jit(nopython=True)
+def get_sigma(lambda_=0.8, s_AMPA_ext=rate_ext*tau_AMPA):
+    # sigma = np.sqrt(
+    #     g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * rate_ext * tau_AMPA**2 / (g_m**2 * tau_m)
+    # )
+    sigma = sigma_noAMPA * np.sqrt(s_AMPA_ext)
     sigma[:-1] = lambda_ * (2e-3) + (1-lambda_) * sigma[:-1]
     return sigma
 
@@ -223,7 +228,7 @@ def phi_fit_I(I_syn, sigma=None):
 #region Euler derivative updates
 
 #region activity variables
-# @jit(nopython=True)  # faster without jit for now
+@jit(nopython=True)
 def ds_NMDA_dt(s_NMDA, nu):
     psi_nu = psi(nu)
     psi_nu[~pyramidal_mask] = 0.0
@@ -231,15 +236,24 @@ def ds_NMDA_dt(s_NMDA, nu):
     dsdt = -(s_NMDA - psi_nu) / tau_NMDA_eff
     return dsdt
 
+# noise_time = np.sqrt(tau_AMPA/defaultdt) / tau_AMPA
+noise_time = 1. / np.sqrt(tau_AMPA * defaultdt)
 # @jit(nopython=True)
 def dic_noise_dt(
     ic_noise,
-    sigma_noise=7e-12, # should this scale with number of populations?
+    sigma_noise=sigma_noise, #7e-12, # should this scale with number of populations?
     randomstate=random_state_default
 ):
-    # eta = np.random.randn(*ic_noise.shape)
     eta = randomstate.randn(*ic_noise.shape)
-    dicdt = (-ic_noise + eta * np.sqrt(tau_AMPA/defaultdt) * sigma_noise) / tau_AMPA
+    dicdt = (-ic_noise + eta * sigma_noise) * noise_time
+    return dicdt
+
+@jit(nopython=True)
+def dic_noise_dt_inputnoise(
+    ic_noise,
+    eta
+):
+    dicdt = (-ic_noise + eta * sigma_noise) * noise_time
     return dicdt
 
 def dnu_dt(
@@ -251,8 +265,9 @@ def dnu_dt(
     deriv = (-nu + phi_Isyn)/tau_rate
     return deriv
 
+@jit(nopython=True)
 def dnu_dt_fitted(
-    nu, I_syn, g_m, sigma, tau_m, tau_rp
+    nu, I_syn, sigma, g_m=g_m, tau_m=tau_m, tau_rp=tau_rp
 ):
     phi_Isyn = np.zeros_like(nu)
     phi_Isyn[pyramidal_mask] = phi_fit_E(
@@ -319,11 +334,12 @@ def F_full(nu, W, theta, plasticity_params):
 #     dtheta_dt = (-theta + nu**2)/tau_theta
 #     return dtheta_dt
 
-# @jit(nopython=True)
+# changed so that theta must be input
+@jit(nopython=True)
 def dtheta_dt(
     theta, nu,
     plasticity_params,
-    **kwargs
+    # **kwargs
 ):
     """
     Threshold for the BCM-rule.
@@ -333,8 +349,8 @@ def dtheta_dt(
     Units of theta are technically different to those of nu. 
     There should be a constant to fix this.
     """
-    if theta is None:
-        return None
+    # if theta is None:
+    #     return None
     p_const, p_theta, mu, tau_theta, xi_00, \
     xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
     xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
@@ -343,43 +359,51 @@ def dtheta_dt(
     return dtheta_dt_now
 
 # TODO: refactor so that F_val is given
-# @jit(nopython=True)
+@jit(nopython=True)
 def de_dt(
     W, eligibility_trace, nu,
     plasticity_params,
     theta=None,
     F_val=None,
-    **kwargs
+    # **kwargs
 ):
     p_const, p_theta, mu, tau_theta, xi_00, \
     xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
     xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
     xi_12_0, xi_12_1, tau_e, beta = plasticity_params
-    if F_val is None:
-        F_val = F_full(nu, W, theta, plasticity_params)
+    # if F_val is None:
+    #     F_val = F_full(nu, W, theta, plasticity_params)
     tau_de_dt = -eligibility_trace + F_val
     return tau_de_dt / tau_e
 
 
 # TODO: refactor so that F_val is given
-# @jit(nopython=True)
+@jit(nopython=True)
 def dW_dt(
     W, eligibility_trace, nu, reward,
     plasticity_params,
     theta=None,
     F_val=None,
-    **kwargs
+    # **kwargs
 ):
     p_const, p_theta, mu, tau_theta, xi_00, \
     xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1, \
     xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1, \
     xi_12_0, xi_12_1, tau_e, beta = plasticity_params
-    if F_val is None:
-        if beta > 0.:
-            F_val = F_full(nu, W, theta, plasticity_params)
-        else:
-            F_val = 0.0
+    # if F_val is None:
+    #     if beta > 0.:
+    #         F_val = F_full(nu, W, theta, plasticity_params)
+    #     else:
+    #         F_val = 0.0
     tau_dw_dt = (1-beta)*eligibility_trace*reward + beta*F_val
+    # plasticity_mask
+    # for j, b in enumerate(plasticity_mask_source):
+    #     if not b:
+    #         tau_dw_dt[:, j] = 0.0
+    # for i, b in enumerate(plasticity_mask_target):
+    #     if not b:
+    #         tau_dw_dt[i, :] = 0.0
+
     return tau_dw_dt  # / tau_w  # tau_w is redundant
 
 #endregion
@@ -392,17 +416,147 @@ def dR_dt_default(reward, tau_reward=tau_reward_default):
 
 #endregion
 
-@jit(nopython=True)
-def dW_dt_BCM(W, nu, theta):
-    dW_dt = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1)) / tau_W
-    for j, b in enumerate(plasticity_mask_source):
-        if not b:
-            dW_dt[:, j] = 0.0
-    for i, b in enumerate(plasticity_mask_target):
-        if not b:
-            dW_dt[i, :] = 0.0
-    return dW_dt
+#region Simulation updates
+def update_dynamics_state_fitted(
+    sigma, V_avg, s_AMPA_ext,
+    nu, s_NMDA, s_AMPA, s_GABA, ic_noise,
+    reward, W, eta
+):
+    """
+    Updates dynamic variables state using default
+    reward derivative and fitted function for phi.
+    """
+    # Compute inputs
+    # TODO: factor out this product?
+    ip_AMPA = (V_drive - V_E) * C_k * s_AMPA
+    ic_AMPA = g_AMPA * (W @ ip_AMPA)
 
+    g_NMDA_eff_V = g_NMDA_eff(V_avg)
+    V_E_eff_V = V_E_eff(V_avg)
+    ip_NMDA = (V_drive - V_E_eff_V) * C_k * s_NMDA
+    ic_NMDA = g_NMDA_eff_V * (W @ ip_NMDA)
+
+    ip_GABA = (V_drive - V_I) * C_k * s_GABA
+    ic_GABA = g_GABA * (W @  ip_GABA)
+
+    ip_AMPA_ext = (V_drive - V_E) * C_ext * s_AMPA_ext
+    ic_AMPA_ext = g_AMPA_ext * ip_AMPA_ext
+
+    I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA + ic_noise
+
+    # Compute derivatives
+    dnu_dt_now = dnu_dt_fitted(
+        nu=nu, I_syn=I_syn, sigma=sigma,
+        # g_m=g_m,
+        # tau_m=tau_m,
+        # tau_rp=tau_rp
+    )
+    dic_noise_dt_now = dic_noise_dt_inputnoise(
+        ic_noise, eta=eta
+    )
+    ds_NMDA_dt_now = ds_NMDA_dt(s_NMDA, nu)
+    ds_AMPA_dt_now = ds_AMPA_dt(s_AMPA, nu)
+    ds_GABA_dt_now = ds_GABA_dt(s_GABA, nu)
+    dreward_dt_now = dR_dt_default(reward)
+
+    # update dynamic states
+    nu += dnu_dt_now * defaultdt
+    ic_noise += dic_noise_dt_now * defaultdt
+    s_NMDA += ds_NMDA_dt_now * defaultdt
+    s_AMPA += ds_AMPA_dt_now * defaultdt
+    s_GABA += ds_GABA_dt_now * defaultdt
+    reward += dreward_dt_now * defaultdt
+
+
+    V_SS = V_L - I_syn / g_m
+    V_avg = V_SS - (V_thr-V_reset)*nu*tau_m - (V_SS-V_reset)*nu*tau_rp
+
+    return I_syn, nu, s_NMDA, s_AMPA, \
+        s_GABA, ic_noise, reward, V_avg
+
+
+def update_weight_state(
+    nu,theta,e,W,reward,
+    plasticity_params
+):
+    dtheta_dt_now = dtheta_dt(
+        theta=theta, nu=nu,
+        plasticity_params=plasticity_params
+    )
+    F_val = F_full(
+        nu=nu, W=W, theta=theta,
+        plasticity_params=plasticity_params
+    )
+    de_dt_now = de_dt(
+        W=W, eligibility_trace=e, nu=nu,
+        theta=theta, F_val=F_val,
+        plasticity_params=plasticity_params
+    )
+    dW_dt_now = dW_dt(
+        W=W, eligibility_trace=e, nu=nu,
+        reward=reward, theta=theta, F_val=F_val,
+        plasticity_params=plasticity_params
+    )
+    theta += dtheta_dt_now * defaultdt
+    e += de_dt_now * defaultdt
+    W += dW_dt_now * defaultdt
+    W = W.clip(0.0, w_max_default)
+    return theta, e, W
+
+def compute_update_step(
+    sigma, V_avg, nu, s_AMPA_ext, s_AMPA, s_NMDA, s_GABA,
+    ic_noise, reward, W, theta, e,
+    randomstate=random_state_default,
+    plasticity=True,
+    plasticity_params=nolearn_parameters,
+    *args, **kwargs
+):
+    eta = randomstate.randn(*ic_noise.shape)
+    I_syn_new, nu_new, s_NMDA_new, s_AMPA_new, \
+    s_GABA_new, ic_noise_new, reward_new, V_avg_new = update_dynamics_state_fitted(
+        sigma=sigma,
+        V_avg=V_avg,
+        s_AMPA_ext=s_AMPA_ext,
+        nu=nu,
+        s_NMDA=s_NMDA,
+        s_AMPA=s_AMPA,
+        s_GABA=s_GABA,
+        ic_noise=ic_noise,
+        reward=reward,
+        W=W,
+        eta=eta
+    )
+    if plasticity:
+        theta_new, e_new, W_new = update_weight_state(
+            nu=nu,
+            theta=theta,
+            e=e,
+            W=W,
+            reward=reward,
+            plasticity_params=plasticity_params
+        )
+    else:
+        theta_new, e_new, W_new = theta, e, W
+    
+    return I_syn_new, nu_new, s_NMDA_new, s_AMPA_new, \
+        s_GABA_new, ic_noise_new, reward_new, V_avg_new, \
+        theta_new, e_new, W_new
+#endregion
+
+
+
+# @jit(nopython=True)
+# def dW_dt_BCM(W, nu, theta):
+#     dW_dt = (np.outer(nu * (nu-theta), nu) / theta.reshape(-1, 1)) / tau_W
+#     for j, b in enumerate(plasticity_mask_source):
+#         if not b:
+#             dW_dt[:, j] = 0.0
+#     for i, b in enumerate(plasticity_mask_target):
+#         if not b:
+#             dW_dt[i, :] = 0.0
+#     return dW_dt
+
+#region Initialisation of weights
 @jit(nopython=True)
 def get_w_minus(w_plus=w_plus, f=f):
     return 1.0 - f*(w_plus - 1.0) / (1.0 - f)
@@ -420,273 +574,4 @@ def get_weights(w_plus=w_plus, p=p, f=f, w_minus=w_minus):
         weights[0] = 1.0
         W[:,i] = weights
     return W
-
-# TODO: remove this, it's obsolete
-def simulate_original(
-    initialisation_steps=10,
-    lambda_=0.8,
-    total_time=runtime,
-    coherence=0.5,
-    plasticity=True,
-    W=None,
-    show_time=False,
-    use_phi_fitted=False
-):
-    """
-    The original simulation for a n-AFC task with one external stimulus.
-    Used for debugging.
-    
-    Added feature for testing: to use the fitted phi func.
-    """
-    ## Initialise arrays for computation
-    # For some reason this can't be numba.jit-ed
-    # C_k = np.array([N_non] + [N_sub] * p + [N_I])
-    # g_m = np.array([g_m_E] * (p+1) + [g_m_I])
-    # C_m = np.array([C_m_E] * (p+1) + [C_m_I])
-    # tau_m = np.array([tau_m_E] * (p+1) + [tau_m_I])
-    # tau_rp = np.array([tau_rp_E] * (p+1) + [tau_rp_I])
-    # nu = np.array([rate_pyramidal] * (p+1) + [rate_interneuron])
-    nu = nu_initial
-    
-    # set weights
-    if W is None:
-        W = get_weights()
-    else:
-        assert W.shape[0] == p+2 
-        W = W.copy()
-
-    # AMPA
-    g_AMPA = np.array([g_AMPA_rec_E]* (p+1) + [g_AMPA_rec_I])
-    s_AMPA = tau_AMPA * nu
-    s_AMPA[~pyramidal_mask] = 0.  # inhibitory neurons won't feed AMPA-mediated synapses
-    ip_AMPA = (V_drive - V_E) * C_k * s_AMPA
-    ic_AMPA = g_AMPA * (W @ ip_AMPA)
-
-    # AMPA_ext
-    g_AMPA_ext = np.array([g_AMPA_ext_E]* (p+1) + [g_AMPA_ext_I])
-    s_AMPA_ext = np.full_like(
-        s_AMPA,
-        tau_AMPA * rate_ext
-    )  # array to allow for differing inputs
-    ip_AMPA_ext = (V_drive - V_E) * C_ext * s_AMPA_ext
-    ic_AMPA_ext = g_AMPA_ext * ip_AMPA_ext
-
-    # GABA
-    g_GABA = np.array([g_GABA_E]* (p+1) + [g_GABA_I])
-    s_GABA = tau_GABA * nu
-    s_GABA[pyramidal_mask] = 0.
-    ip_GABA = (V_drive - V_I) * C_k * s_GABA
-    ic_GABA = g_GABA * (W @  ip_GABA)
-
-    # NMDA - requires self-consistent calculation
-    g_NMDA = np.array([g_NMDA_E]* (p+1) + [g_NMDA_I])
-    # can I speed these up with @numba.jit?
-    g_NMDA_eff = lambda V: g_NMDA * J_2(V)
-    V_E_eff = lambda V: V - (1 / J_2(V)) * (V - V_E) / J(V)
-
-    s_NMDA = psi(nu)
-    s_NMDA[~pyramidal_mask] = 0.
-    V_avg_initial = -56e-3  # initial guess for determining V_avg
-    
-    # Initialise V_avg, V_SS
-    # can I speed this up with @numba.jit?
-    V_avg = np.full(p+2, V_avg_initial)
-    for k in range(initialisation_steps):
-        g_NMDA_eff_V = g_NMDA_eff(V_avg)
-        V_E_eff_V = V_E_eff(V_avg)
-        ip_NMDA = (V_drive - V_E_eff_V) * C_k * s_NMDA
-        ic_NMDA = g_NMDA_eff_V * (W @ ip_NMDA)
-        I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA
-        V_SS = V_L - I_syn / g_m  # notice the minus, because current flows out?
-        V_avg = V_SS - (V_thr-V_reset)*nu*tau_m - (V_SS-V_reset)*nu*tau_rp
-    
-    # set sigma
-    sigma = np.sqrt(
-        g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * rate_ext * tau_AMPA**2 / (g_m**2 * tau_m)
-    )
-    sigma[:-1] = lambda_ * (2e-3) + (1-lambda_) * sigma[:-1]
-
-    # initialise values for learning
-    theta_BCM = nu ** 2
-
-    ## Initialise arrays to track values, and for simulation
-    times = np.arange(0, total_time, defaultdt)
-#     nu_tracked = np.zeros((p+2, times.shape[0]))
-#     s_NMDA_tracked = np.zeros((p+2, times.shape[0]))
-#     s_AMPA_tracked = np.zeros((p+2, times.shape[0]))
-#     s_GABA_tracked = np.zeros((p+2, times.shape[0]))
-#     I_syn_tracked = np.zeros((p+2, times.shape[0]))
-    
-#     theta_BCM_tracked = np.zeros((p+2, times.shape[0]))
-#     W_tracked = np.zeros((p+2, p+2, times.shape[0]))
-    nu_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_NMDA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_AMPA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
-    
-    theta_BCM_tracked = np.full((p+2, times.shape[0]), np.nan)
-    W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
-    
-    if not plasticity:
-        W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
-    
-    ic_noise = np.zeros_like(s_AMPA)
-    if show_time:
-        from tqdm import tqdm
-    else:
-        tqdm = lambda x: x
-    for itr, t in tqdm(enumerate(times)):
-        ip_AMPA = (V_drive - V_E) * C_k * s_AMPA
-        ic_AMPA = g_AMPA * (W @ ip_AMPA)
-
-        g_NMDA_eff_V = g_NMDA_eff(V_avg)
-        V_E_eff_V = V_E_eff(V_avg)
-        ip_NMDA = (V_drive - V_E_eff_V) * C_k * s_NMDA
-        ic_NMDA = g_NMDA_eff_V * (W @ ip_NMDA)
-
-        ip_GABA = (V_drive - V_I) * C_k * s_GABA
-        ic_GABA = g_GABA * (W @  ip_GABA)
-
-
-        ## LATEST CHANGE: added noise adapting to changing input by adapting s_AMPA_ext
-        s_AMPA_ext = np.full_like(
-            s_AMPA,
-            tau_AMPA * rate_ext
-        )
-        if t > 200e-3 and t < 400e-3:
-            # mu_0 ~= 0.05 in Wong&Wang2006, taken by comparison with mean external input
-            multiplier = np.ones(p+2)
-            multiplier[1] += 0.05 * (1+coherence)
-            multiplier[2] += 0.05 * (1-coherence)
-            s_AMPA_ext = s_AMPA_ext * multiplier
-
-            # increase input by roughly 1.5 times
-#             s_AMPA_ext[1] = s_AMPA_ext[1] * 1.5  #(25. * b2.Hz + rate_ext) / rate_ext
-        
-        ip_AMPA_ext = (V_drive - V_E) * C_ext * s_AMPA_ext
-        ic_AMPA_ext = g_AMPA_ext * ip_AMPA_ext
-        sigma = np.sqrt(
-            g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * s_AMPA_ext * tau_AMPA / (g_m**2 * tau_m)
-        )
-        sigma[:-1] = lambda_ * (2e-3) + (1-lambda_) * sigma[:-1]
-        ## END OF LAST CHANGE
-
-        I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA + ic_noise
-
-        dnu_dt_now = None
-        if use_phi_fitted:
-            dnu_dt_now = dnu_dt_fitted(
-                nu, I_syn,
-                sigma=sigma,
-                g_m=g_m,
-                tau_m=tau_m,
-                tau_rp=tau_rp
-            )
-        else:
-            dnu_dt_now = dnu_dt(
-                nu, I_syn,
-                sigma=sigma,
-                g_m=g_m,
-                tau_m=tau_m,
-                tau_rp=tau_rp
-            )
-        dic_noise_dt_now = dic_noise_dt(ic_noise)
-        ds_NMDA_dt_now = ds_NMDA_dt(s_NMDA, nu)
-        ds_AMPA_dt_now = ds_AMPA_dt(s_AMPA, nu)
-        ds_GABA_dt_now = ds_GABA_dt(s_GABA, nu)
-        
-        if plasticity:
-            dtheta_BCM_dt_now = dtheta_BCM_dt(theta_BCM, nu)
-            dW_dt_now = dW_dt_BCM(W, nu, theta_BCM)
-        
-
-        nu += dnu_dt_now * defaultdt
-        ic_noise += dic_noise_dt_now * defaultdt
-        s_NMDA += ds_NMDA_dt_now * defaultdt
-        s_AMPA += ds_AMPA_dt_now * defaultdt
-        s_GABA += ds_GABA_dt_now * defaultdt
-        
-        if plasticity:
-            theta_BCM += dtheta_BCM_dt_now * defaultdt
-            W += dW_dt_now * defaultdt
-            W = W.clip(0.0, np.inf)
-
-        nu_tracked[:, itr] = nu
-        s_NMDA_tracked[:, itr] = s_NMDA
-        s_AMPA_tracked[:, itr] = s_AMPA
-        s_GABA_tracked[:, itr] = s_GABA
-        I_syn_tracked[:, itr] = I_syn
-        
-        if plasticity:
-            theta_BCM_tracked[:, itr] = theta_BCM
-            W_tracked[:, :, itr] = W
-
-        # Not mentioned in W&W2006:
-        V_SS = V_L - I_syn / g_m
-        V_avg = V_SS - (V_thr-V_reset)*nu*tau_m - (V_SS-V_reset)*nu*tau_rp
-        
-        if np.any(np.isnan(nu)):
-            break
-
-    return  times,\
-            nu_tracked,\
-            s_NMDA_tracked,\
-            s_AMPA_tracked,\
-            s_GABA_tracked,\
-            I_syn_tracked,\
-            theta_BCM_tracked,\
-            W_tracked
-
-
-
-
-
-###############################################
-#########  TESTING ############################
-###############################################
-
-def test_funcs():
-    J_2(np.full(p, V_drive))    
-    
-    test_rate = np.full(p, rate_ext)
-    np.allclose(psi(test_rate), psi_scipy(test_rate))
-    
-    rate_vectorised(
-        np.full(5, V_drive),
-        np.full(5, 2e-3),
-        tau_m_E, tau_rp_E
-    )
-    print("Running test simulation")
-    times,\
-    nu_tracked,\
-    s_NMDA_tracked,\
-    s_AMPA_tracked,\
-    s_GABA_tracked,\
-    I_syn_tracked,\
-    theta_BCM_tracked,\
-    W_tracked = simulate_original(
-        total_time=0.6, coherence=0.7,
-        plasticity=False,
-        show_time=True
-    )
-    print(f"Simulation ran until {times[-1]:.2f} seconds")
-    print("\nRunning fitted-phi simulation")
-    times,\
-    nu_tracked,\
-    s_NMDA_tracked,\
-    s_AMPA_tracked,\
-    s_GABA_tracked,\
-    I_syn_tracked,\
-    theta_BCM_tracked,\
-    W_tracked = simulate_original(
-        total_time=0.6, coherence=0.7,
-        plasticity=False,
-        show_time=True,
-        use_phi_fitted=True
-    )
-    print(f"Simulation ran until {times[-1]:.2f} seconds")
-    
-if __name__ == '__main__':
-    test_funcs()
-    print('Hello World!')
+#endregion

@@ -8,9 +8,13 @@ from deap import base, creator, tools, algorithms  #, cma  # cma taken from evol
 import argparse
 
 import pickle
-from os import path
-from datetime import datetime
 from time import time
+
+from os import path, mkdir
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib import animation
+
 
 #region: Parse Arguments
 parser = argparse.ArgumentParser(description='Run evolutionary algorithm')
@@ -58,16 +62,36 @@ parser.add_argument(
     '--hof', type=int,
     default=20, help='number of individuals to store in hall of fame'
 )
+parser.add_argument(
+    '--n_workers', type=int,
+    default=0, help='number of dask workers. If n_workers == 0, lambda_ is used'
+)
+parser.add_argument(
+    '--start_trained', action='store_true',
+    help='whether to start with params w_+, w_- as given in Brunel&Wang2001'
+)
+parser.add_argument(
+    '--imagedir', type=str,
+    default='images_and_animations'
+)
+
 args = parser.parse_args()
-#endregion
-
-#region: Checkpointing
+script_running_datetime = datetime.now()
+folder_prefix = path.join(path.join('experiments', str(script_running_datetime)))
+imagedir = path.join(folder_prefix, args.imagedir)
+paramsdir = path.join(folder_prefix, 'parameters')
+paramsfile = path.join(paramsdir, 'experiment_parameters.json')
 # TODO: replace checkpointing with custom CMA method
-checkpoint_folder = 'ea_checkpoints'
+checkpoint_folder = path.join(folder_prefix, 'ea_checkpoints')
+checkpoint_fname = path.join(checkpoint_folder, 'checkpoint.pkl')
 
-fname = f'checkpoint_{datetime.now()}.pkl'
-checkpoint_fname = path.join(checkpoint_folder, fname)
+
+n_workers = args.n_workers
+if n_workers == 0:
+    n_workers == args.lambda_
 #endregion
+
+
 
 #region: Debugging
 nan_debug = False
@@ -84,8 +108,8 @@ def save_nan_debug(plasticity_params, results_dict):
             )
             # add randomness to avoid collisions
             fname = f'nan_simulation_{datetime_suffix}_{np.random.rand()}.pkl'
-            with open(path.join(debug_folder, fname), 'wb') as f:
-                pickle.dump(savefile, f)
+            with open(path.join(debug_folder, fname), 'wb') as fp:
+                pickle.dump(savefile, fp)
     return None
 #endregion
 
@@ -102,8 +126,9 @@ n_runs = args.n_runs
 n_multiples = args.n_multiples
 
 
-w_plus = 1.  # start in unlearned state
-w_minus = get_w_minus(w_plus)  # should return 1.
+# start in unlearned state?
+w_plus = 2.1 if args.start_trained else 1.
+w_minus = get_w_minus(w_plus)  #  get_w_minus(1.) = 1.
 W_initial = get_weights(
     w_plus=w_plus,
     w_minus=w_minus
@@ -130,19 +155,6 @@ trial_func = partial(
 )
 
 penalty = args.penalty
-# def get_reward_from_results(
-#     results_dict,
-#     n_runs=n_runs,
-#     penalty=penalty
-#     ):
-#     # the sooner it fails, the further it is from a safe region
-#     reward = penalty*(len(results_dict['reward'])-n_runs)
-#     for rew_array in results_dict['reward']:
-#             if not np.any(np.isnan(rew_array)):
-#                 reward += np.sum(rew_array)
-#             else:
-#                 reward -= penalty
-#     return reward * defaultdt
 get_rewards = partial(
     get_reward_from_results,
     penalty=penalty, n_runs=n_runs
@@ -153,19 +165,14 @@ def plasticity_fitness(
     n_runs, n_multiples,
     trial_func=trial_func,
     W_initial=W_initial,
-    seeds=None,
     randomstate=random_state_default,
     nan_debug=False
-):
-    # very hacky, but whatever
-    # if seeds is None:
-    #     seeds = [None] * n_multiples
-    
+):    
     all_results = [run_repeated_trial(
         W_initial=W_initial,
         plasticity_params=plasticity_params,
         trial_func=trial_func, n_runs=n_runs,
-        verbose=False, #seed=seeds[i],
+        verbose=False,
         randomstate=randomstate,
         nan_verbose=True  # see when NaNs occur
         )
@@ -174,38 +181,13 @@ def plasticity_fitness(
     for results_dict in all_results:
         if nan_debug:
             save_nan_debug(plasticity_params, results_dict)
-        # fitness += get_reward_from_results(results_dict)
         fitness += get_rewards(results_dict)
     # return average fitness!
-    return fitness / n_multiples  # CHANGE MADE HERE
+    return fitness / n_multiples
 
 #endregion
 
 #region: Set Up EA
-
-# inherited from evolution.py
-# class Genome(list):
-#     def __init__(self, *args, seed=None, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         # apparently better than RandomState(seed)
-#         self.randomstate = RandomState(MT19937(SeedSequence(seed)))
-
-# TODO: factor out seeds
-# seeds are necessary for independent simulations
-# so we make it the second positional argument in the 
-# fitness function so it works well with client.map
-# def fitness(genome, seeds, n_runs, n_multiples, nan_debug=False):
-#     plasticity_params = get_params_from_genome(np.array(genome))
-#     randomstate = genome.randomstate
-#     fitness = plasticity_fitness(
-#         plasticity_params=plasticity_params,
-#         n_runs=n_runs,
-#         n_multiples=n_multiples,
-#         seeds=seeds,
-#         nan_debug=nan_debug
-#         )
-#     return fitness,
-
 def fitness(genome, n_runs, n_multiples, nan_debug=False):
     plasticity_params = get_params_from_genome(np.array(genome))
     randomstate = genome.randomstate
@@ -229,9 +211,9 @@ stats.register('max', np.max)
 
 # increase initial covariance along no-learning manifold
 cov_matrix_initial = np.eye(len(nolearn_genome))
-cov_matrix_initial[2] = 1e2
-cov_matrix_initial[-2] = 1e2
-cov_matrix_initial[-1] = 1e2
+# cov_matrix_initial[2] = 1e2
+# cov_matrix_initial[-2] = 1e2
+# cov_matrix_initial[-1] = 1e2
 
 # parameters are generally tiny, so choose small sigma
 sigma = args.sigma
@@ -244,7 +226,7 @@ strategy = CMAStrategy(
     sigma=sigma,
     cov_matrix_initial=cov_matrix_initial,
     lambda_=lambda_EA,
-    weights="linear",  # noisy, don't want to converge too quickly
+    weights="equal",  # noisy, don't want to converge too quickly
     # custom parameters:
     store_centroids=True,
     store_covariances=True,
@@ -268,7 +250,7 @@ toolbox.register("update", strategy.update)
 
 
 if __name__ == '__main__':
-    cluster = LocalCluster(n_workers=lambda_EA)
+    cluster = LocalCluster(n_workers=n_workers)
     client = Client(cluster)
 
     def dask_map(func, *seqs, **kwargs):
@@ -289,6 +271,10 @@ if __name__ == '__main__':
         end = time()
         print(f"Total time taken: {end-start:2.f} seconds")
     else:
+        if not path.exists(folder_prefix):
+            mkdir(folder_prefix)
+        if not path.exists(checkpoint_folder):
+            mkdir(checkpoint_folder)
         for i in range(0, int(n_gen/checkpoint_freq)):
             start = time()
             print(f"Running to next checkpoint, starting from gen. {i*checkpoint_freq}")
@@ -311,8 +297,8 @@ if __name__ == '__main__':
             )
             end = time()
             print(f"Saving checkpoint. Segment time taken: {end-start:.2f} seconds")
-            with open(checkpoint_fname, 'wb') as f:
-                pickle.dump(state, f)
+            with open(checkpoint_fname, 'wb') as fp:
+                pickle.dump(state, fp)
         if n_gen % checkpoint_freq > 0:
             start = time()
             print(
@@ -330,3 +316,109 @@ if __name__ == '__main__':
             print(f"Final segment time taken: {end-start:.2f} seconds")
 
     print("Final Population:\n", *pop, sep='\n')
+
+    if strategy.store_centroids or strategy.track_fitnesses:
+        if not path.exists(folder_prefix):
+            mkdir(folder_prefix)
+        if not path.exists(checkpoint_folder):
+            mkdir(checkpoint_folder)
+        if not path.exists(imagedir):
+            mkdir(imagedir)
+        if not path.exists(paramsdir):
+            mkdir(paramsdir)
+        with open(paramsfile, 'w') as fp:
+            json.dump(parameters_dict, fp)
+
+    if strategy.track_fitnesses:
+        fig, axes = plt.subplots(figsize=(12, 6))
+        # print("max fitnesses", strategy.fitness_max)
+        axes.plot(
+            np.arange(len(strategy.fitness_max)),
+            strategy.fitness_max,
+            label='maximum')
+        axes.plot(
+            np.arange(len(strategy.fitness_min)),
+            strategy.fitness_min,
+            label='minimum')
+        axes.set_title('Fitness Across the Generations')
+        axes.set_xlabel('generation')
+        axes.set_ylabel('fitness (a.u.)')
+        axes.legend()
+        plt.savefig(path.join(imagedir, "plasticity_fitnesses.png"))
+    if strategy.store_centroids:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax2 = ax.twinx()
+        xlabels = param_names_latex
+        xticks = np.arange(len(xlabels))
+        tau_mask = np.array(['tau' in s for s in xlabels])
+
+        # TODO: put this function in evolution.py??
+        # TODO: make different plots for different sized params
+        # TODO: add variance to plots
+        def anim_func(i, ax=ax,ax2=ax2, cmap=plt.cm.cool):
+            ax.clear()
+            ax2.clear()
+            start_params = get_params_from_genome(strategy.stored_centroids[0])
+            end_params = get_params_from_genome(strategy.stored_centroids[-1])
+            params = get_params_from_genome(strategy.stored_centroids[i])
+            # print(start_params, tau_mask)
+            # print(start_params[~tau_mask])
+            ax.plot(
+                xticks[~tau_mask], start_params[~tau_mask],
+                'x',
+                # color='orange'
+                color="gray",
+                alpha=0.5,
+                label='start'
+                )
+            ax.plot(
+                xticks[~tau_mask], end_params[~tau_mask],
+                'o',
+                # color='orange'
+                color="black",
+                alpha=0.5,
+                label='end'
+                )
+            ax.plot(
+                xticks[~tau_mask], params[~tau_mask],
+                '.',
+                # color='orange'
+                color=cmap(i/(n_gen-1))
+                )
+            ax2.plot(
+                xticks[tau_mask], start_params[tau_mask],
+                'x',
+                # color='orange'
+                color="gray",
+                alpha=0.5,
+                label='start'
+                )
+            ax2.plot(
+                xticks[tau_mask], end_params[tau_mask],
+                'x',
+                # color='orange'
+                color="black",
+                alpha=0.5,
+                label='end'
+                )
+            ax2.plot(
+                xticks[tau_mask], params[tau_mask],
+                '.',
+                # color='orange'
+                color=cmap(i/(n_gen-1))
+                )
+            ax.set_title("Evolution of Plasticity Parameters")
+            ax.legend()
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xlabels)
+            ax.set_ylabel('param strengths (a.u.)')
+            ax2.set_ylabel('time constants (seconds)')
+
+        anim = animation.FuncAnimation(
+            fig=fig,
+            func=anim_func,
+            frames=np.arange(n_gen+1)
+            )
+        anim.save(
+            path.join(imagedir, f'parameters_animation.gif'))
+        plt.show()
