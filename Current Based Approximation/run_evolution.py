@@ -9,7 +9,7 @@ import argparse
 
 import pickle
 from time import time
-
+import json
 from os import path, mkdir
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -66,32 +66,34 @@ parser.add_argument(
     '--n_workers', type=int,
     default=0, help='number of dask workers. If n_workers == 0, lambda_ is used'
 )
-parser.add_argument(
+# Determine start
+start_group = parser.add_mutually_exclusive_group()
+start_group.add_argument(
     '--start_trained', action='store_true',
     help='whether to start with params w_+, w_- as given in Brunel&Wang2001'
 )
-parser.add_argument(
-    '--imagedir', type=str,
-    default='images_and_animations'
+start_group.add_argument(
+    '--w_plus', type=float,
+    default=1.0, help='w_+ param to start with. Default (untrained) is 1.'
 )
 
 args = parser.parse_args()
-script_running_datetime = datetime.now()
-folder_prefix = path.join(path.join('experiments', str(script_running_datetime)))
-imagedir = path.join(folder_prefix, args.imagedir)
+
+script_running_datetime = str(datetime.now()).replace(' ', '_')
+folder_suffix = '_'.join([__file__[:-3], script_running_datetime])
+folder_prefix = path.join(path.join('experiments', folder_suffix))
+
+imagedir = path.join(folder_prefix, 'images_and_animations')
 paramsdir = path.join(folder_prefix, 'parameters')
 paramsfile = path.join(paramsdir, 'experiment_parameters.json')
-# TODO: replace checkpointing with custom CMA method
+checkpointsdir = path.join(folder_prefix, 'checkpoints')
 checkpoint_folder = path.join(folder_prefix, 'ea_checkpoints')
 checkpoint_fname = path.join(checkpoint_folder, 'checkpoint.pkl')
-
 
 n_workers = args.n_workers
 if n_workers == 0:
     n_workers == args.lambda_
 #endregion
-
-
 
 #region: Debugging
 nan_debug = False
@@ -114,17 +116,17 @@ def save_nan_debug(plasticity_params, results_dict):
 #endregion
 
 #region: Set Up Task
-if args.task == '2afc':
+task = args.task
+if task == '2afc':
     run_trial_func = run_trial_coherence_2afc
     coherence = [-args.coherence, args.coherence]
-elif args.task == 'xor':
+elif task == 'xor':
     run_trial_func = run_trial_XOR
     coherence = args.coherence
 else:
     raise NotImplementedError(f"Task {args.task} not yet implemented.")
 n_runs = args.n_runs
 n_multiples = args.n_multiples
-
 
 # start in unlearned state?
 w_plus = 2.1 if args.start_trained else 1.
@@ -134,17 +136,6 @@ W_initial = get_weights(
     w_minus=w_minus
 )
 
-trial_params = dict(
-    p=p,
-    f=f,
-    N=N,
-    w_plus=w_plus,
-    w_minus=w_minus,
-    task=args.task,
-    coherence=coherence,
-    n_runs=n_runs,
-    n_multiples=n_multiples
-    )
     
 use_phi_fitted = not args.use_phi_true
 trial_func = partial(
@@ -220,6 +211,8 @@ sigma = args.sigma
 lambda_EA = args.lambda_  # increased because noisy fitness function
 centroid = nolearn_genome
 
+n_gen = args.n_gen
+checkpoint_freq = args.checkpoint_freq
 # strategy = cma.Strategy(
 strategy = CMAStrategy(
     centroid=centroid,
@@ -230,13 +223,14 @@ strategy = CMAStrategy(
     # custom parameters:
     store_centroids=True,
     store_covariances=True,
-    track_fitnesses=True
+    track_fitnesses=True,
+    halloffame=tools.HallOfFame(args.hof),
+    checkpoint_dir=checkpointsdir,
+    checkpoint_every=checkpoint_freq
 )
 
-n_gen = args.n_gen
-checkpoint_freq = args.checkpoint_freq
 
-hof = tools.HallOfFame(args.hof)  # hopefully it will find values far apart
+# hof = tools.HallOfFame(args.hof)  # hopefully it will find values far apart
 
 toolbox = base.Toolbox()
 toolbox.register(
@@ -250,6 +244,38 @@ toolbox.register("update", strategy.update)
 
 
 if __name__ == '__main__':
+    if not path.exists(folder_prefix):
+        mkdir(folder_prefix)
+    if not path.exists(imagedir):
+        mkdir(imagedir)
+    if not path.exists(paramsdir):
+        mkdir(paramsdir)
+    if not path.exists(checkpointsdir):
+        mkdir(checkpointsdir)
+    experiment_dict = dict(
+        script=__file__,
+        n_workers=n_workers,
+        nan_debug=nan_debug,
+        # task=task,
+        # coherence=args.coherence,
+        # n_runs=n_runs,
+        # n_multiples=n_multiples,
+        w_plus_initial=w_plus,
+        w_minus_initial=w_minus,
+        # use_phi_fitted=use_phi_fitted,
+        # penalty=penalty,
+        # sigma_initial=sigma,
+        # lambda_EA=lambda_EA,
+        centroid_initial=centroid,
+        cov_matrix_initial=cov_matrix_initial.tolist(),
+        # n_gen=n_gen,
+        # checkpoint_freq=checkpoint_freq,
+        input_args=dict(vars(args))
+    )
+    parameters_dict.update(experiment_dict)
+    with open(paramsfile, 'w') as fp:
+        json.dump(parameters_dict, fp)
+
     cluster = LocalCluster(n_workers=n_workers)
     client = Client(cluster)
 
@@ -259,75 +285,19 @@ if __name__ == '__main__':
 
     toolbox.register("map", dask_map)
     
-    if checkpoint_freq <= 0:
-        start = time()
-        pop, logbook = algorithms.eaGenerateUpdate(
-                toolbox,
-                ngen=n_gen,
-                stats=stats,
-                halloffame=hof,
-                verbose=True
-            )
-        end = time()
-        print(f"Total time taken: {end-start:2.f} seconds")
-    else:
-        if not path.exists(folder_prefix):
-            mkdir(folder_prefix)
-        if not path.exists(checkpoint_folder):
-            mkdir(checkpoint_folder)
-        for i in range(0, int(n_gen/checkpoint_freq)):
-            start = time()
-            print(f"Running to next checkpoint, starting from gen. {i*checkpoint_freq}")
-            pop, logbook = algorithms.eaGenerateUpdate(
-                toolbox,
-                ngen=checkpoint_freq,
-                stats=stats,
-                halloffame=hof,
-                verbose=True
-            )
-
-            state = dict(
-                population=[list(x) for x in pop],
-                # fitnesses=[x.fitness.values for x in pop],
-                halloffame=[list(x) for x in hof],
-                # logbook=logbook,
-                generation=i + checkpoint_freq,
-                covariance=strategy.C,
-                trial_params=trial_params
-            )
-            end = time()
-            print(f"Saving checkpoint. Segment time taken: {end-start:.2f} seconds")
-            with open(checkpoint_fname, 'wb') as fp:
-                pickle.dump(state, fp)
-        if n_gen % checkpoint_freq > 0:
-            start = time()
-            print(
-                f"Running to final segment, starting from " \
-                f"gen. {int(n_gen/checkpoint_freq)*checkpoint_freq}"
-                )
-            pop, logbook = algorithms.eaGenerateUpdate(
-                toolbox,
-                ngen=(n_gen % checkpoint_freq),
-                stats=stats,
-                halloffame=hof,
-                verbose=True
-            )
-            end = time()
-            print(f"Final segment time taken: {end-start:.2f} seconds")
-
+    # if checkpoint_freq <= 0:
+    start = time()
+    pop, logbook = algorithms.eaGenerateUpdate(
+            toolbox,
+            ngen=n_gen,
+            stats=stats,
+            # halloffame=hof,
+            verbose=True
+        )
+    end = time()
+    print(f"Total time taken: {end-start:2.f} seconds")
+    
     print("Final Population:\n", *pop, sep='\n')
-
-    if strategy.store_centroids or strategy.track_fitnesses:
-        if not path.exists(folder_prefix):
-            mkdir(folder_prefix)
-        if not path.exists(checkpoint_folder):
-            mkdir(checkpoint_folder)
-        if not path.exists(imagedir):
-            mkdir(imagedir)
-        if not path.exists(paramsdir):
-            mkdir(paramsdir)
-        with open(paramsfile, 'w') as fp:
-            json.dump(parameters_dict, fp)
 
     if strategy.track_fitnesses:
         fig, axes = plt.subplots(figsize=(12, 6))
@@ -345,6 +315,7 @@ if __name__ == '__main__':
         axes.set_ylabel('fitness (a.u.)')
         axes.legend()
         plt.savefig(path.join(imagedir, "plasticity_fitnesses.png"))
+
     if strategy.store_centroids:
         fig, ax = plt.subplots(figsize=(12, 6))
         ax2 = ax.twinx()

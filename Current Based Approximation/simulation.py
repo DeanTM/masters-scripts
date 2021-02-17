@@ -59,22 +59,22 @@ def run_trial_coherence_2afc(
         # still, for summing, one should scale by defaultdt
         return reward / tau_reward_default
     
-    # if use_phi_fitted:
-    #     return run_trial_fitted(initialisation_steps=initialisation_steps,
-    #         lambda_=lambda_,
-    #         total_time=total_time,
-    #         plasticity=plasticity,
-    #         W=W,
-    #         nu=nu_initial,
-    #         theta=nu_initial,
-    #         external_input_multiplier=multiplier,
-    #         stim_start=stim_start,
-    #         stim_end=stim_end,
-    #         eval_time=eval_time,
-    #         reward_func=reward_func,
-    #         plasticity_params=plasticity_params,
-    #         randomstate=randomstate
-    #     )
+    if use_phi_fitted:
+        return run_trial_fitted(initialisation_steps=initialisation_steps,
+            lambda_=lambda_,
+            total_time=total_time,
+            plasticity=plasticity,
+            W=W,
+            nu=nu_initial,
+            theta=nu_initial,
+            external_input_multiplier=multiplier,
+            stim_start=stim_start,
+            stim_end=stim_end,
+            eval_time=eval_time,
+            reward_func=reward_func,
+            plasticity_params=plasticity_params,
+            randomstate=randomstate
+        )
     return run_trial(
         initialisation_steps=initialisation_steps,
         lambda_=lambda_,
@@ -189,7 +189,7 @@ def run_trial_fitted(
         W = get_weights()
     else:
         W = W.copy()
-    
+    W = W.clip(0.0, w_max_default)
     nu = nu.copy()
     theta = theta.copy()
 
@@ -335,7 +335,7 @@ def run_trial(
         assert W.shape[0] == p+2 
         W = W.copy()
     assert len(external_input_multiplier) == p+2
-    
+    W = W.clip(0.0, w_max_default)
     # AMPA
     s_AMPA = tau_AMPA * nu
     s_AMPA[~pyramidal_mask] = 0.  # inhibitory neurons won't feed AMPA-mediated synapses
@@ -534,3 +534,8 @@ def run_trial(
         reward=reward_tracked
     )
     return return_dict
+
+if __name__ == '__main__':
+    W = get_weights(w_plus=3.1, w_minus=0.1)
+    results = run_trial_coherence_2afc(W=W, initialisation_steps=100)
+    print(results)

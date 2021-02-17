@@ -15,6 +15,8 @@ import json
 
 import argparse
 
+np.seterr(all='raise')
+
 parser = argparse.ArgumentParser(description='Run evolutionary algorithm')
 parser.add_argument(
     '--n_runs', type=int,
@@ -52,10 +54,10 @@ parser.add_argument(
     '--n_gen', type=int,
     default=200, help='number of generations for CMA-ES'
 )
-# parser.add_argument(
-#     '--checkpoint_freq', type=int,
-#     default=20, help='frequency with which to save checkpoints (in generations)'
-# )
+parser.add_argument(
+    '--checkpoint_freq', type=int,
+    default=20, help='frequency with which to save checkpoints (in generations)'
+)
 parser.add_argument(
     '--hof', type=int,
     default=20, help='number of individuals to store in hall of fame'
@@ -74,19 +76,22 @@ start_group.add_argument(
     '--w_plus', type=float,
     default=1.0, help='w_+ param to start with. Default (untrained) is 1.'
 )
-# parser.add_argument(
-#     '--imagedir', type=str,
-#     default='images_and_animations'
-# )
+
 args = parser.parse_args()
-script_running_datetime = datetime.now()
-folder_prefix = path.join(path.join('experiments', str(script_running_datetime)))
-# imagedir = path.join(folder_prefix, args.imagedir)
-imagedir = 'images_and_animations'
+
+script_running_datetime = str(datetime.now()).replace(' ', '_')
+folder_suffix = '_'.join([__file__[:-3], script_running_datetime])
+folder_prefix = path.join(path.join('experiments', folder_suffix))
+
+imagedir = path.join(folder_prefix, 'images_and_animations')
 paramsdir = path.join(folder_prefix, 'parameters')
 paramsfile = path.join(paramsdir, 'experiment_parameters.json')
+checkpointsdir = path.join(folder_prefix, 'checkpoints')
+resultsdir = path.join(folder_prefix, 'results')
 
-# from scipy.optimize import fmin
+
+
+
 
 # W_opt = [[0.824, 1.017, 0.805, 1.   ],
 #         [0.981, 2.081, 0.772, 1.   ],
@@ -97,6 +102,9 @@ n_runs = args.n_runs
 n_multiples = args.n_multiples
 coherence = args.coherence
 penalty = args.penalty
+
+n_workers = args.n_workers
+checkpoint_freq = args.checkpoint_freq
 
 n_gen = args.n_gen
 n_hof = args.hof
@@ -139,20 +147,11 @@ unit_unbound = bound_weights_inverse(1.)
 w_plus_unbound = bound_weights_inverse(w_plus)
 w_minus_unbound = bound_weights_inverse(w_minus)
 
-# w_plus = 2.1  if args.start_trained else 1.
 w_minus = get_w_minus(w_plus=w_minus)
 W_initial = get_weights(
     w_plus=w_plus,
     w_minus=w_minus
 )
-
-# if args.start_trained:
-#     unit_unbound = -0.18232156  # bound_weights^-1(1)
-#     w_plus_unbound = 3.04453857  # bound_weights^-1(2.1)
-#     w_minus_unbound = -0.40969482  # bound_weights^-1(get_w_minus(2.1))
-# else:
-#     args.w_plus
-#     w_plus_unbound = w_minus_unbound = unit_unbound = -0.18232156
 
 
 def weight_fitness(
@@ -179,7 +178,7 @@ def weight_fitness(
 def get_weights_from_genome(genome):
     genome_reshaped = np.array(genome).reshape(p+2,p+1)
     bound_genome = bound_weights(genome_reshaped)
-    return np.hstack([bound_genome, W_initial[:,-1].reshape(-1,1)])    
+    return np.hstack([bound_genome, W_initial[:,-1].reshape(-1,1)])
     
 
 
@@ -223,19 +222,25 @@ strategy = CMAStrategy(
     lambda_=lambda_EA,
     sigma=sigma_EA,
     store_centroids=True,
+    store_covariances=True,
+    track_fitnesses=True,
+    halloffame=tools.HallOfFame(n_hof),
+    checkpoint_every=checkpoint_freq,
+    checkpoint_dir=checkpointsdir,
     # weights='linear'  # don't want to overemphasize chance
-    weights='equal'
+    weights='equal',  # TODO: add to arguments
+    
 )
 
-hof = tools.HallOfFame(n_hof)
+# hof = tools.HallOfFame(n_hof)
 
 toolbox = base.Toolbox()
 toolbox.register("evaluate", fitness)
 toolbox.register("generate", strategy.generate, creator.Individual)
 toolbox.register("update", strategy.update)
 
-rows = np.repeat(np.arange(p+2).reshape(-1,1), 4, axis=1)
-columns = np.repeat(np.arange(p+2).reshape(1,-1), 4, axis=0)
+rows = np.repeat(np.arange(p+2).reshape(-1,1), p+2, axis=1)
+columns = np.repeat(np.arange(p+2).reshape(1,-1), p+2, axis=0)
 labels = list(map(lambda x,y : f"{x}->{y}", columns.ravel(), rows.ravel()))
 labels = [label.replace(str(p+1),'inh') for label in labels]
 def animate_weights(i, cma_strategy, ax, cmap=plt.cm.cool):
@@ -262,10 +267,10 @@ def animate_weights(i, cma_strategy, ax, cmap=plt.cm.cool):
         # color='orange'
         color=cmap(i/(n_gen-1))
         )
-    x_axis_vals = np.arange(weights.shape[0])
-    fixed_weights = x_axis_vals[columns.ravel()==3]
-    
-    ax.plot(fixed_weights, np.ones_like(fixed_weights), 'ko')
+
+    # x_axis_vals = np.arange(weights.shape[0])
+    # fixed_weights = x_axis_vals[columns.ravel()==3]
+    # ax.plot(fixed_weights, np.ones_like(fixed_weights), 'ko')
 
     ax.set_xticks(np.arange(weights.shape[0]))
     ax.set_xticklabels(labels=labels, rotation=65)
@@ -281,6 +286,37 @@ def animate_weights(i, cma_strategy, ax, cmap=plt.cm.cool):
 
 
 if __name__ == '__main__':
+    if not path.exists(folder_prefix):
+        mkdir(folder_prefix)
+    if not path.exists(imagedir):
+        mkdir(imagedir)
+    if not path.exists(paramsdir):
+        mkdir(paramsdir)
+    if not path.exists(checkpointsdir):
+        mkdir(checkpointsdir)
+    # TODO: update experiment parameters to include trial details and starting conditions
+    experiment_dict = dict(
+        script=__file__,
+        n_workers=n_workers,
+        # task=task,
+        # coherence=args.coherence,
+        # n_runs=n_runs,
+        # n_multiples=n_multiples,
+        w_plus_initial=w_plus,
+        w_minus_initial=w_minus,
+        # use_phi_fitted=use_phi_fitted,
+        # penalty=penalty,
+        # sigma_initial=sigma,
+        # lambda_EA=lambda_EA,
+        centroid_initial=centroid,
+        # cov_matrix_initial=cov_matrix_initial.tolist(),
+        # n_gen=n_gen,
+        # checkpoint_freq=checkpoint_freq,
+        input_args=dict(vars(args))
+    )
+    parameters_dict.update(experiment_dict)
+    with open(paramsfile, 'w') as fp:
+        json.dump(parameters_dict, fp)
     
     np.set_printoptions(precision=3, suppress=True)
     running_datetime = datetime.now()
@@ -288,7 +324,7 @@ if __name__ == '__main__':
     print("Confirm correct starting weights:")
     print(get_weights_from_genome(centroid))
 
-    cluster = LocalCluster(n_workers=lambda_EA)
+    cluster = LocalCluster(n_workers=n_workers)
     client = Client(cluster)
 
     def dask_map(func, *seqs, **kwargs):
@@ -303,7 +339,7 @@ if __name__ == '__main__':
         ngen=n_gen,
         # stats=mstats,
         stats=stats,
-        halloffame=hof,
+        # halloffame=hof,
         verbose=True
     )
 
@@ -311,6 +347,7 @@ if __name__ == '__main__':
     print("Complete")
     print(f"Total Time Taken: {end-start:.2f} seconds")
     
+    hof = strategy.halloffame
     print(
         "\nHall of Fame Weights:",
         *map(get_weights_from_genome, hof),
@@ -332,14 +369,6 @@ if __name__ == '__main__':
         )
     
     plt.show()
-    if not path.exists(folder_prefix):
-        mkdir(folder_prefix)
-    if not path.exists(imagedir):
-        mkdir(imagedir)
-    if not path.exists(paramsdir):
-        mkdir(paramsdir)
-    with open(paramsfile, 'w') as fp:
-        json.dump(parameters_dict, fp)
     anim.save(path.join(
         imagedir, 'weights_animation.gif'
         ))

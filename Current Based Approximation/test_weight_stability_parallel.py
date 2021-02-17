@@ -28,10 +28,6 @@ parser.add_argument(
     '-l', '--lambda_', type=float, default=0.8
     )
 parser.add_argument(
-    '-p', '--plasticity',
-    action='store_true'
-)
-parser.add_argument(
     '--nosave',
     action='store_true'
 )
@@ -43,17 +39,12 @@ parser.add_argument(
     '-f', '--usefitted',
     action='store_true'
 )
-parser.add_argument(
-    '--imagedir', type=str,
-    default='images_and_animations'
-)
 
 args = parser.parse_args()
 
 gridsize = args.gridsize
 w_max = args.w_max
 lambda_ = args.lambda_
-plasticity = args.plasticity
 use_phi_fitted = args.usefitted
 
 total_time = args.total_time
@@ -74,7 +65,7 @@ def run_test(
         results = run_trial_fitted(
             lambda_=lambda_,
             total_time=total_time,
-            plasticity=plasticity,
+            plasticity=False,
             W=W,
             stim_start=stim_start,
             stim_end=stim_end,
@@ -84,7 +75,7 @@ def run_test(
         results = run_trial(
             lambda_=lambda_,
             total_time=total_time,
-            plasticity=plasticity,
+            plasticity=False,
             W=W,
             stim_start=stim_start,
             stim_end=stim_end,
@@ -188,8 +179,10 @@ if __name__ == '__main__':
         import matplotlib.pyplot as plt
         from matplotlib.ticker import FormatStrFormatter
 
-        folder_prefix = path.join(path.join('experiments', save_datetime))
-        imagedir = path.join(folder_prefix, args.imagedir)
+        save_datetime = save_datetime.replace(' ', '_')
+        folder_suffix = '_'.join([__file__[:-3], save_datetime])
+        folder_prefix = path.join(path.join('experiments', folder_suffix))
+        imagedir = path.join(folder_prefix, 'images_and_animations')
         paramsdir = path.join(folder_prefix, 'parameters')
         paramsfile = path.join(paramsdir, 'experiment_parameters.json')
         if not path.exists(folder_prefix):

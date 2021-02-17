@@ -4,9 +4,24 @@ from simulation import *
 # such as tracking values and checkpointing
 # Note: it's still the case that individual scripts will need
 # to specify some functionality, like `dask_map`
-from deap import cma
+from deap import cma, tools
+import json
+from os import path
 
 #region Classes for the evolutionary algorithm
+
+# TODO: update function to save state of CMA-ES as well,
+# particularly for restarting.
+# TODO: confirm strategy.C is indeed the covariance matrix
+# that would allow for initial restarts (can do in jupyter
+# by fitting one CMA-ES to a task and then checking that a
+# new generates has the same distribution of individuals)
+def save_population(filename, population):
+    pop_list = [list(x) for x in population]
+    with open(filename, 'w') as fp:
+        json.dump(pop_list, fp)
+
+
 class Genome(list):
     """
     A genome which has it's own RandomState for parallelisation.
@@ -17,7 +32,6 @@ class Genome(list):
         super().__init__(*args, **kwargs)
         self.randomstate = None
 
-
 # TODO: implement checkpointing
 class CMAStrategy(cma.Strategy):
     def __init__(
@@ -26,6 +40,9 @@ class CMAStrategy(cma.Strategy):
         store_centroids=False,
         store_covariances=False,
         track_fitnesses=False,
+        checkpoint_every=0,
+        checkpoint_dir=None,
+        halloffame=None,
         **kwargs
         ):
         super().__init__(*args, **kwargs)
@@ -33,16 +50,33 @@ class CMAStrategy(cma.Strategy):
         self.randomstates = [RandomState() for i in range(self.lambda_)]
         self.store_centroids = store_centroids
         self.store_covariances = store_covariances
+        self.track_fitnesses = track_fitnesses
+        self.checkpoint_every = checkpoint_every
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_bool = self.checkpoint_every > 0 \
+            and isinstance(self.checkpoint_dir, str)
+
+        # set up hall of fame for checkpointing or whatever
+        if self.checkpoint_bool:
+            if isinstance(halloffame, int):
+                self.halloffame = tools.HallOfFame(halloffame)
+            elif isinstance(halloffame, tools.HallOfFame):
+                self.halloffame = halloffame
+            else:
+                self.halloffame = tools.HallOfFame(10)
+        elif isinstance(halloffame, int):
+            self.halloffame = tools.HallOfFame(halloffame)
+        elif isinstance(halloffame, tools.HallOfFame):
+                self.halloffame = halloffame
+
         self.stored_centroids = None
         self.stored_covariances = None
         self.fitness_max = None
         self.fitness_min = None
-        self.track_fitnesses = track_fitnesses
-
         if self.store_centroids:
-            self.stored_centroids = [self.centroid]
+            self.stored_centroids = [self.centroid.tolist() if isinstance(self.centroid, np.ndarray) else self.centroid]
         if self.store_covariances:
-            self.stored_covariances = [self.C]  # I hope this is covariance!!
+            self.stored_covariances = [self.C.tolist()]  # I hope this is covariance!!
         if self.track_fitnesses:
             # from these lists we can compute the max and min so far
             self.fitness_max = []
@@ -56,12 +90,55 @@ class CMAStrategy(cma.Strategy):
             population[i].randomstate = self.randomstates[i]
         return population
     
+    def get_cma_state(self):
+        """
+        Returns a JSON-serialisable description of the state.
+        
+        Very hacky!
+        """
+        cma_state = dict([
+            (x, y.tolist()) if isinstance(y, np.ndarray)
+            else (x, y)
+            for x, y in vars(self).items()
+            if x != 'randomstates'
+        ])
+        for k, v in cma_state.items():
+            if isinstance(v, np.ndarray):
+                cma_state[k] = v.tolist()
+            elif isinstance(v, np.float):
+                cma_state[k] = float(v)
+            elif isinstance(v, dict):
+                # go one deeper
+                for k2, v2 in v.items():
+                    if isinstance(v2, np.ndarray):
+                        cma_state[k][k2] = v2.tolist()
+                    elif isinstance(v2, np.float):
+                        cma_state[k][k2] = float(v2)
+        
+        cma_state['halloffame'] = [list(x) for x in self.halloffame]
+        return cma_state
+
+    def checkpoint(self):
+        cma_state = self.get_cma_state()
+        save_filename = path.join(
+            self.checkpoint_dir,
+            f'{self.update_count}_checkpoint.json'
+            )
+        with open(save_filename, 'w') as fp:
+            json.dump(cma_state, fp)        
+    
+
     def update(self, population):
         super().update(population)
+
+        # I could do this with multiple inheritance as well, I suppose...
+        if isinstance(self.halloffame, tools.HallOfFame):
+            self.halloffame.update(population)
+
         if self.store_centroids:
-            self.stored_centroids.append(self.centroid)
+            self.stored_centroids.append(self.centroid.tolist() if isinstance(self.centroid, np.ndarray) else self.centroid)
         if self.store_covariances:
-            self.stored_covariances.append(self.C)
+            self.stored_covariances.append(self.C.tolist())
         if self.track_fitnesses:
             sorted_population = sorted(
                 population,
@@ -72,6 +149,11 @@ class CMAStrategy(cma.Strategy):
             self.fitness_min.append(sorted_population[0].fitness.values[0])
             self.fitness_avg.append(np.mean(fitness_vals))
             self.fitness_std.append(np.std(fitness_vals))
+        # checkpoint AFTER updating state
+        if self.checkpoint_bool:
+            if self.update_count % self.checkpoint_every == 0:
+                print(f"Checkpointing on gen. {self.update_count}")
+                self.checkpoint()
 #endregion
 
 
@@ -87,6 +169,10 @@ def logit(x):
 @jit(nopython=True)
 def softplus(x):
     return np.log(1+np.exp(x))
+
+@jit(nopython=True)
+def softplus_inv(y):
+    return np.log(np.exp(y) - 1)
 
 @jit(nopython=True)
 def get_params_from_genome(genome):
@@ -111,6 +197,31 @@ def get_params_from_genome(genome):
     params[-2] = tau_e
     params[-1] = beta
     return params
+
+# TODO: use `get_genome_from_params` to customize initial
+# learning rules in run_evolution.py script
+@jit(nopython=True)
+def get_genome_from_params(params):
+    genome = Genome(x for x in params)
+    
+    p_theta = params[1]
+    mu = params[2]
+    tau_theta = params[3]
+    tau_e = params[-2]
+    beta = params[-1]
+    
+    p_theta_unbounded = softplus_inv(p_theta - 1)
+    mu_unbounded = logit(mu)
+    tau_theta_unbounded = softplus_inv(tau_theta)
+    tau_e_unbounded = softplus_inv(tau_e)
+    beta_unbounded = logit(beta)
+    
+    genome[1] = p_theta_unbounded
+    genome[2] = mu_unbounded
+    genome[3] = tau_theta_unbounded
+    genome[-2] = tau_e_unbounded
+    genome[-1] = beta_unbounded
+    return genome
 #endregion
 
 

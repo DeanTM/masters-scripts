@@ -71,7 +71,7 @@ random_state_default = RandomState(MT19937(SeedSequence(1337)))
 #endregion
 
 #region Plasticity Params
-w_max_default = 2.2  # 3.5
+w_max_default = 3.5
 mu_default = 0.2
 
 # reward defaults

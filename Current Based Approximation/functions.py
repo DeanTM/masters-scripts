@@ -3,11 +3,10 @@ from parameters import *
 import numba
 from numba import jit
 
-# import numpy as np
 from scipy import special, integrate
 
-import warnings
-warnings.filterwarnings('ignore')
+
+
 
 # pyramidal mask used to determine which vector values to zero
 pyramidal_mask = np.array([True] * (p+1) + [False])
@@ -55,6 +54,9 @@ def g_NMDA_eff(V):
 @jit(nopython=True)
 def V_E_eff(V):
     return V - (1 / J_2(V)) * (V - V_E) / J(V)
+
+def test(v=beta_JahrStevens):
+    print(v)
 
 #region Functions to compute steady-state NMDA channels
 @jit(nopython=True)
@@ -291,11 +293,63 @@ def ds_GABA_dt(s_GABA, nu):
     deriv[pyramidal_mask] = 0.0
     return deriv
 #endregion
+
+@jit(nopython=True)
+def reweight_individual_xi(xi, W, mu):
+    # pos_mask = xi > 0.
+    for i in np.arange(xi.shape[0]):
+        for j in np.arange(xi.shape[0]):
+            if xi[i, j] > 0.:
+                xi[i, j] *= (w_max_default - W[i, j])**mu
+            elif xi[i, j] < 0.:
+                xi[i, j] *= W[i, j]**mu
+    # xi[pos_mask] = xi[pos_mask] * (w_max_default-W[pos_mask])**mu
+    # xi[~pos_mask] = xi[~pos_mask] * W[~pos_mask]**mu
+    return xi
+
+
+@jit(nopython=True)
+def get_xis_reweighted(
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1,
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1,
+    xi_12_0, xi_12_1, W, mu
+):
+    xi_10_0 = np.full_like(W, xi_10_0)
+    xi_10_0 = reweight_individual_xi(xi_10_0, W, mu)
+    xi_10_1 = np.full_like(W, xi_10_1)
+    xi_10_1 = reweight_individual_xi(xi_10_1, W, mu)
+    xi_01_0 = np.full_like(W, xi_01_0)
+    xi_01_0 = reweight_individual_xi(xi_01_0, W, mu)
+    xi_01_1 = np.full_like(W, xi_01_1)
+    xi_01_1 = reweight_individual_xi(xi_01_1, W, mu)
+    xi_11_0 = np.full_like(W, xi_11_0)
+    xi_11_0 = reweight_individual_xi(xi_11_0, W, mu)
+    xi_11_1 = np.full_like(W, xi_11_1)
+    xi_11_1 = reweight_individual_xi(xi_11_1, W, mu)
+    xi_20_0 = np.full_like(W, xi_20_0)
+    xi_20_0 = reweight_individual_xi(xi_20_0, W, mu)
+    xi_20_1 = np.full_like(W, xi_20_1)
+    xi_20_1 = reweight_individual_xi(xi_20_1, W, mu)
+    xi_21_0 = np.full_like(W, xi_21_0)
+    xi_21_0 = reweight_individual_xi(xi_21_0, W, mu)
+    xi_21_1 = np.full_like(W, xi_21_1)
+    xi_21_1 = reweight_individual_xi(xi_21_1, W, mu)
+    xi_02_0 = np.full_like(W, xi_02_0)
+    xi_02_0 = reweight_individual_xi(xi_02_0, W, mu)
+    xi_02_1 = np.full_like(W, xi_02_1)
+    xi_02_1 = reweight_individual_xi(xi_02_1, W, mu)
+    xi_12_0 = np.full_like(W, xi_12_0)
+    xi_12_0 = reweight_individual_xi(xi_12_0, W, mu)
+    xi_12_1 = np.full_like(W, xi_12_1)
+    xi_12_1 = reweight_individual_xi(xi_12_1, W, mu)
+    return xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1,\
+           xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1,\
+           xi_12_0, xi_12_1
     
 
 #region plasticity variables
 # TODO: test
-@jit(nopython=True)
+# @jit(nopython=True)
 def F_full(nu, W, theta, plasticity_params):
     # crudely coded
     p_const, p_theta, mu, tau_theta, xi_00, \
@@ -309,6 +363,14 @@ def F_full(nu, W, theta, plasticity_params):
     theta_cast_p = theta_cast**p_theta
     ones_vec = np.ones_like(nu)
     result = np.zeros_like(W)
+
+    # implementation 2: reweight xis before
+    xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1,\
+    xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1,\
+    xi_12_0, xi_12_1 = get_xis_reweighted(
+        xi_10_0, xi_10_1, xi_01_0, xi_01_1, xi_11_0, xi_11_1,
+        xi_20_0, xi_20_1, xi_21_0, xi_21_1, xi_02_0, xi_02_1,
+        xi_12_0, xi_12_1, W, mu)
         
     result += (xi_10_0 + xi_10_1 * theta_cast_p) * (nu @ ones_vec.T)
     result += (xi_01_0 + xi_01_1 * theta_cast_p) * (ones_vec @ nu.T)
@@ -317,7 +379,7 @@ def F_full(nu, W, theta, plasticity_params):
     result += (xi_21_0 + xi_21_1 * theta_cast_p) * ((nu**2) @ nu.T)
     result += (xi_02_0 + xi_02_1 * theta_cast_p) * (ones_vec @ (nu.T**2))
     result += (xi_12_0 + xi_12_1 * theta_cast_p) * (nu @ (nu.T**2))
-    result *= ((w_max_default - W)*W)**mu
+    # result *= ((w_max_default - W)*W)**mu
     result += xi_00 * (theta_cast**p_const) * W
     return result
 
