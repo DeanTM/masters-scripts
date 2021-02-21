@@ -100,14 +100,8 @@ BCM_parameters = (
     0.,0., 0.0337*0.0168, 0.,0.,0.,
     0.,0.,1.,1.
 )
-# nolearn_parameters = (
-#     0.,1.,0.5,100.,0.,
-#     0.,0.,0.,0.,0.,0.,
-#     0.,0.,0.,0.,0.,0.,
-#     0.,0.,100.,0.5
-# )
 
-# decrease beta to reward-only learning
+# beta to reward-only learning
 nolearn_parameters = (
     0.,1.,0.5,100.,0.,
     0.,0.,0.,0.,0.,0.,
@@ -117,12 +111,8 @@ nolearn_parameters = (
 #endregion
 
 #region Evolution Params
-# nolearn_genome = [
-#     0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
-#     0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,0.
-# ]
 
-# decrease beta to reward-only learning
+# beta to reward-only learning
 nolearn_genome = [
     0.,-10.,0.,100.,0.,0.,0.,0.,0.,0.,
     0.,0.,0.,0.,0.,0.,0.,0.,0.,100.,-10.

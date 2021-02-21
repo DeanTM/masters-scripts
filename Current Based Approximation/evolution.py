@@ -6,12 +6,10 @@ from simulation import *
 # to specify some functionality, like `dask_map`
 from deap import cma, tools
 import json
-from os import path
+from os import path, mkdir
 
 #region Classes for the evolutionary algorithm
 
-# TODO: update function to save state of CMA-ES as well,
-# particularly for restarting.
 # TODO: confirm strategy.C is indeed the covariance matrix
 # that would allow for initial restarts (can do in jupyter
 # by fitting one CMA-ES to a task and then checking that a
@@ -32,7 +30,7 @@ class Genome(list):
         super().__init__(*args, **kwargs)
         self.randomstate = None
 
-# TODO: implement checkpointing
+
 class CMAStrategy(cma.Strategy):
     def __init__(
         self,
@@ -119,6 +117,12 @@ class CMAStrategy(cma.Strategy):
         return cma_state
 
     def checkpoint(self):
+        # make directory to save:
+        path_split = self.checkpoint_dir.split(path.sep)
+        for i in range(1,len(path_split)):
+            if not path.exists(path.join(*path_split[:i])):
+                mkdir(path.join(*path_split[:i]))
+
         cma_state = self.get_cma_state()
         save_filename = path.join(
             self.checkpoint_dir,
@@ -129,6 +133,8 @@ class CMAStrategy(cma.Strategy):
     
 
     def update(self, population):
+        # centroid etc is updated before checkpoint 
+        # => fitness etc is for prior cma state values
         super().update(population)
 
         # I could do this with multiple inheritance as well, I suppose...

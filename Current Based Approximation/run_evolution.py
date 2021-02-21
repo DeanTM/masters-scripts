@@ -10,7 +10,7 @@ import argparse
 import pickle
 from time import time
 import json
-from os import path, mkdir
+from os import path, mkdir, cpu_count
 from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib import animation
@@ -64,7 +64,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '--n_workers', type=int,
-    default=0, help='number of dask workers. If n_workers == 0, lambda_ is used'
+    default=cpu_count(), help='number of dask workers, defaults to cpu count'
 )
 # Determine start
 start_group = parser.add_mutually_exclusive_group()
@@ -197,8 +197,8 @@ creator.create("Individual", Genome, fitness=creator.FitnessMax)
 stats = tools.Statistics(lambda ind: ind.fitness.values)
 stats.register('avg', np.mean)
 stats.register('std', np.std)
-stats.register('min', np.min)
 stats.register('max', np.max)
+stats.register('min', np.min)
 
 # increase initial covariance along no-learning manifold
 cov_matrix_initial = np.eye(len(nolearn_genome))

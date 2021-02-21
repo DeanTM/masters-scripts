@@ -109,11 +109,11 @@ if __name__ == '__main__':
                 and x.startswith('stability-test-grid')
                 ])
             max_firing_rates = np.load(
-                os.path.join(
+                path.join(
                     'stability_tests_data',
                     saved_firing_rates[-1]))
             grid = np.load(
-                os.path.join(
+                path.join(
                     'stability_tests_data',
                     saved_grids[-1]))
             # hacky way to get the previous datetime

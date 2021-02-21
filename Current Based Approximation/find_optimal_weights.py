@@ -10,7 +10,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
-from os import path, mkdir
+from os import path, mkdir, cpu_count
 import json
 
 import argparse
@@ -64,7 +64,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '--n_workers', type=int,
-    default=12, help='number of dask workers.'
+    default=cpu_count(), help='number of dask workers, defaults to cpu count'
 )
 # Determine start
 start_group = parser.add_mutually_exclusive_group()
@@ -111,8 +111,9 @@ n_hof = args.hof
 lambda_EA = args.lambda_
 sigma_EA = args.sigma
 
-run_trial_func = run_trial_coherence_2afc
-coherence = [-coherence, coherence]
+task = args.task
+run_trial_func = run_trial_coherence_2afc if task == '2afc' else run_trial_XOR
+coherence = [-coherence, coherence] if task == '2afc' else coherence
 
 
 trial_func = partial(
@@ -278,8 +279,9 @@ def animate_weights(i, cma_strategy, ax, cmap=plt.cm.cool):
     ax.set_ylim(-.1, w_max_default+.1)
     ax.set_title(
         "Evolution of Synaptic Weights" +\
-        f"\ncoherence:{coherence[-1]:.2f}, penalty:{penalty:.2f}, " +\
-        f"runs:{n_runs}, restarts:{n_multiples}"
+        f"\ncoherence:{args.coherence:.2f}, penalty:{penalty:.2f}, " +\
+        f"runs:{n_runs}, restarts:{n_multiples}" +\
+        f"\nTask: {task}"
         )
     ax.legend(loc='upper right')
     ax.grid(alpha=0.1, linestyle=':')
@@ -292,26 +294,14 @@ if __name__ == '__main__':
         mkdir(imagedir)
     if not path.exists(paramsdir):
         mkdir(paramsdir)
-    if not path.exists(checkpointsdir):
-        mkdir(checkpointsdir)
-    # TODO: update experiment parameters to include trial details and starting conditions
+    # if not path.exists(checkpointsdir):
+    #     mkdir(checkpointsdir)
     experiment_dict = dict(
         script=__file__,
         n_workers=n_workers,
-        # task=task,
-        # coherence=args.coherence,
-        # n_runs=n_runs,
-        # n_multiples=n_multiples,
         w_plus_initial=w_plus,
         w_minus_initial=w_minus,
-        # use_phi_fitted=use_phi_fitted,
-        # penalty=penalty,
-        # sigma_initial=sigma,
-        # lambda_EA=lambda_EA,
         centroid_initial=centroid,
-        # cov_matrix_initial=cov_matrix_initial.tolist(),
-        # n_gen=n_gen,
-        # checkpoint_freq=checkpoint_freq,
         input_args=dict(vars(args))
     )
     parameters_dict.update(experiment_dict)

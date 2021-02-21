@@ -50,7 +50,9 @@ def J_2(V):
 @jit(nopython=True)
 def g_NMDA_eff(V):
     return g_NMDA * J_2(V)
-    
+
+
+#FIXME: 1/J_2(V) causes occassional NaNs
 @jit(nopython=True)
 def V_E_eff(V):
     return V - (1 / J_2(V)) * (V - V_E) / J(V)
@@ -348,8 +350,13 @@ def get_xis_reweighted(
     
 
 #region plasticity variables
-# TODO: test
-# @jit(nopython=True)
+@jit(nopython=True)
+def H(nu, W, theta, plasticity_params):
+    """Correct name..."""
+    return F_full(nu, W, theta, plasticity_params)
+
+# TODO: change name of F_full to match name in thesis
+@jit(nopython=True)
 def F_full(nu, W, theta, plasticity_params):
     # crudely coded
     p_const, p_theta, mu, tau_theta, xi_00, \
@@ -479,6 +486,7 @@ def dR_dt_default(reward, tau_reward=tau_reward_default):
 #endregion
 
 #region Simulation updates
+@jit(nopython=True)
 def update_dynamics_state_fitted(
     sigma, V_avg, s_AMPA_ext,
     nu, s_NMDA, s_AMPA, s_GABA, ic_noise,
@@ -536,7 +544,7 @@ def update_dynamics_state_fitted(
     return I_syn, nu, s_NMDA, s_AMPA, \
         s_GABA, ic_noise, reward, V_avg
 
-
+@jit(nopython=True)
 def update_weight_state(
     nu,theta,e,W,reward,
     plasticity_params
@@ -561,9 +569,9 @@ def update_weight_state(
     )
     theta += dtheta_dt_now * defaultdt
     e += de_dt_now * defaultdt
-    W += dW_dt_now * defaultdt
-    W = W.clip(0.0, w_max_default)
-    return theta, e, W
+    W_unclipped = W + dW_dt_now * defaultdt
+    # W = np.clip(W, 0.0, w_max_default)
+    return theta, e, W_unclipped
 
 def compute_update_step(
     sigma, V_avg, nu, s_AMPA_ext, s_AMPA, s_NMDA, s_GABA,
@@ -589,7 +597,7 @@ def compute_update_step(
         eta=eta
     )
     if plasticity:
-        theta_new, e_new, W_new = update_weight_state(
+        theta_new, e_new, W_new_unclipped = update_weight_state(
             nu=nu,
             theta=theta,
             e=e,
@@ -597,6 +605,7 @@ def compute_update_step(
             reward=reward,
             plasticity_params=plasticity_params
         )
+        W_new = np.clip(W_new_unclipped, 0., w_max_default)
     else:
         theta_new, e_new, W_new = theta, e, W
     

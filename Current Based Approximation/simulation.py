@@ -104,6 +104,7 @@ def run_trial_XOR(
     nu=nu_initial,
     theta=nu_initial,
     coherence=0.5,
+    inputs=None,
     stim_start=0.2,
     stim_end=0.4,
     eval_time=0.6,
@@ -119,7 +120,11 @@ def run_trial_XOR(
         coherence = randomstate.choice(coherence)
     
     multiplier = np.ones(p+2)
-    inputs = np.random.choice([0, 1], size=2)
+    if inputs is None:
+        inputs = randomstate.choice([0, 1], size=2)
+    else:
+        assert len(inputs) == 2, \
+            'Inputs must be specified for both neurons, or None'
     readout_cell = 2 if inputs.sum() % 2 == 0 else 3
     nonreadout_cell = 3 if inputs.sum() % 2 == 0 else 2
     multiplier[1:3] += 0.05*(1 + inputs*coherence)
@@ -397,12 +402,7 @@ def run_trial(
     reward = 0.
     has_evaluated = False
     for itr, t in enumerate(times):
-        #TODO refactor so that this is the update step
-        # one for phi_fitted and one for the original
-        # compute reward with eval funcoutside of update,
-        # after update
-        # also update s_AMPA_ext outside of this loop
-        
+       
         ip_AMPA = (V_drive - V_E) * C_k * s_AMPA
         ic_AMPA = g_AMPA * (W @ ip_AMPA)
 
@@ -427,10 +427,6 @@ def run_trial(
 
         # TODO: compute outside of loop, change only when needed
         sigma = get_sigma(lambda_=lambda_, s_AMPA_ext=s_AMPA_ext)
-        # sigma = np.sqrt(
-        #     g_AMPA_ext**2 * (V_drive - V_E)**2 * C_ext * s_AMPA_ext * tau_AMPA / (g_m**2 * tau_m)
-        # )
-        # sigma[:-1] = lambda_ * (2e-3) + (1-lambda_) * sigma[:-1]
         
         I_syn = ic_AMPA + ic_AMPA_ext + ic_NMDA + ic_GABA + ic_noise
         if use_phi_fitted:
@@ -499,9 +495,6 @@ def run_trial(
         if np.any(np.isnan(nu)) or np.any(np.isnan(W)):
             # break before storing the NaNs
             break
-
-        # TODO: determine reward here, at end of loop, so at the start
-        # of the next timestep the plasticity and dynamics get full reward
             
         nu_tracked[:, itr] = nu
         s_NMDA_tracked[:, itr] = s_NMDA
