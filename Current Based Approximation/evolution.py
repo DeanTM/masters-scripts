@@ -119,9 +119,9 @@ class CMAStrategy(cma.Strategy):
     def checkpoint(self):
         # make directory to save:
         path_split = self.checkpoint_dir.split(path.sep)
-        for i in range(1,len(path_split)):
-            if not path.exists(path.join(*path_split[:i])):
-                mkdir(path.join(*path_split[:i]))
+        for i in range(len(path_split)):
+            if not path.exists(path.join(*path_split[:i+1])):
+                mkdir(path.join(*path_split[:i+1]))
 
         cma_state = self.get_cma_state()
         save_filename = path.join(
