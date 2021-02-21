@@ -295,7 +295,7 @@ if __name__ == '__main__':
             verbose=True
         )
     end = time()
-    print(f"Total time taken: {end-start:2.f} seconds")
+    print(f"Total time taken: {end-start:.2f} seconds")
     
     print("Final Population:\n", *pop, sep='\n')
 
