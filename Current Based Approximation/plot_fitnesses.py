@@ -9,11 +9,12 @@ parser.add_argument('-w', '--weights', action='store_true')
 args = parser.parse_args()
 
 def get_checkpoint_and_params(experiment_fname):
-    print(experiment_fname)
     lr_evolution_base = '/home/dean/Projects/plasticity-code/Current Based Approximation/experiments/'
     lr_evolution_prefix = lr_evolution_base + experiment_fname
     lr_evolution_checkpoints = path.join(lr_evolution_prefix, 'checkpoints')
     lr_evolution_parameters = path.join(lr_evolution_prefix, 'parameters')
+    if not path.exists(lr_evolution_checkpoints) or not path.exists(lr_evolution_parameters):
+        return None
     lr_checkpoints_fnames = sorted(
         [path.join(lr_evolution_checkpoints, x) for x in listdir(lr_evolution_checkpoints)],
         key=path.getmtime)
@@ -21,7 +22,7 @@ def get_checkpoint_and_params(experiment_fname):
         print(
             "No checkpoints found in folder for experiment: ",
             experiment_fname)
-        return
+        return None
 
     with open(lr_checkpoints_fnames[-1], 'r') as f:
         checkpoint = json.load(f)
