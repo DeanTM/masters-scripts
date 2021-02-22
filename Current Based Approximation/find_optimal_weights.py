@@ -66,6 +66,10 @@ parser.add_argument(
     '--n_workers', type=int,
     default=cpu_count(), help='number of dask workers, defaults to cpu count'
 )
+parser.add_argument(
+    '--show_anim', action='store_true',
+    help='whether to show the animation at the end of the EA'
+)
 # Determine start
 start_group = parser.add_mutually_exclusive_group()
 start_group.add_argument(
@@ -357,8 +361,8 @@ if __name__ == '__main__':
         func=func_animation,
         frames=np.arange(n_gen+1)
         )
-    
-    plt.show()
+    if args.show_anim:
+        plt.show()
     anim.save(path.join(
         imagedir, 'weights_animation.gif'
         ))
