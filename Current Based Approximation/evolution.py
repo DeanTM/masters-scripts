@@ -236,10 +236,11 @@ def run_repeated_trial(
     trial_func, n_runs,
     verbose=False,
     nan_verbose=False,
-    randomstate=random_state_default
+    randomstate=random_state_default,
+    store_states=False
 ):
     W = W_initial
-    theta = None
+    theta = nu_initial
     full_results_dict = dict()
     
     iterable = range(n_runs)
@@ -251,10 +252,15 @@ def run_repeated_trial(
             W=W,
             theta=theta,
             plasticity_params=plasticity_params,
-            randomstate=randomstate
+            randomstate=randomstate,
+            store_states=store_states
         )
-        W = results_dict["W"][:, :, -1]
-        theta = results_dict["theta"][:, -1]
+        if store_states:
+            W = results_dict["W"][:, :, -1]
+            theta = results_dict["theta"][:, -1]
+        else:
+            W = results_dict["W"]
+            theta = results_dict["theta"]
         if i == 0:
             for k, v in results_dict.items():
                 full_results_dict[k] = [v]
@@ -262,7 +268,10 @@ def run_repeated_trial(
             for k, v in results_dict.items():
                 full_results_dict[k].append(v)
         # stop repeating if weights are NaN
-        nu = results_dict["nu"][:, -1]
+        if store_states:
+            nu = results_dict["nu"][:, -1]
+        else:
+             nu = results_dict["nu"]
         if np.any(np.isnan(W)) or np.any(np.isnan(nu)):
             if nan_verbose:
                 print(f"NaN encountered in trial {i+1}/{n_runs}")

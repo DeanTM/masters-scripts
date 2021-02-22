@@ -35,6 +35,7 @@ def run_trial_coherence_2afc(
     use_phi_fitted=True,
     plasticity_params=nolearn_parameters,
     randomstate=random_state_default,
+    store_states=True,
 ):
     """Specifies stimulus and reward function for 2-afc task."""
     assert p >= 2, "2afc requires at least two selective groups"
@@ -73,7 +74,8 @@ def run_trial_coherence_2afc(
             eval_time=eval_time,
             reward_func=reward_func,
             plasticity_params=plasticity_params,
-            randomstate=randomstate
+            randomstate=randomstate,
+            store_states=store_states,
         )
     return run_trial(
         initialisation_steps=initialisation_steps,
@@ -92,6 +94,7 @@ def run_trial_coherence_2afc(
         use_phi_fitted=use_phi_fitted,
         plasticity_params=plasticity_params,
         randomstate=randomstate,
+        store_states=store_states,
     )
 
 
@@ -112,6 +115,7 @@ def run_trial_XOR(
     use_phi_fitted=True,
     plasticity_params=nolearn_parameters,
     randomstate=random_state_default,
+    store_states=True,
 ):
     """Specifies stimulus and reward function for XOR task."""
     assert p >= 4, "XOR needs two inputs and two outputs"
@@ -153,7 +157,8 @@ def run_trial_XOR(
             eval_time=eval_time,
             reward_func=reward_func,
             plasticity_params=plasticity_params,
-            randomstate=randomstate
+            randomstate=randomstate,
+            store_states=store_states,
         )
     return run_trial(
         initialisation_steps=initialisation_steps,
@@ -172,6 +177,7 @@ def run_trial_XOR(
         use_phi_fitted=use_phi_fitted,
         plasticity_params=plasticity_params,
         randomstate=randomstate,
+        store_states=store_states,
     )
 
 def run_trial_fitted(
@@ -189,6 +195,7 @@ def run_trial_fitted(
     reward_func=lambda x: 0.0,
     plasticity_params=nolearn_parameters,
     randomstate=random_state_default,
+    store_states=True,
 ):
     if W is None:
         W = get_weights()
@@ -236,18 +243,20 @@ def run_trial_fitted(
 
     ## Initialise arrays to track values, and for simulation
     times = np.arange(0, total_time, defaultdt)
-    nu_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_NMDA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_AMPA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
-    theta_tracked = np.full((p+2, times.shape[0]), np.nan)
+    # reward always tracked
     reward_tracked = np.full((1, times.shape[0]), np.nan)  # only one reward signal
-    e_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
-    W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
+    if store_states:
+        nu_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_NMDA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_AMPA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
+        theta_tracked = np.full((p+2, times.shape[0]), np.nan)
+        e_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
+        W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
 
-    if not plasticity:
-        W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
+        if not plasticity:
+            W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
     
     if theta is None:
         theta = nu
@@ -283,31 +292,46 @@ def run_trial_fitted(
             has_evaluated = True
             reward = reward_func(nu)
         
-        nu_tracked[:, itr] = nu
-        s_NMDA_tracked[:, itr] = s_NMDA
-        s_AMPA_tracked[:, itr] = s_AMPA
-        s_GABA_tracked[:, itr] = s_GABA
-        I_syn_tracked[:, itr] = I_syn
+        # reward always tracked
         reward_tracked[:, itr] = reward
+        if store_states:
+            nu_tracked[:, itr] = nu
+            s_NMDA_tracked[:, itr] = s_NMDA
+            s_AMPA_tracked[:, itr] = s_AMPA
+            s_GABA_tracked[:, itr] = s_GABA
+            I_syn_tracked[:, itr] = I_syn
+            
+            if plasticity:
+                theta_tracked[:, itr] = theta
+                e_tracked[:, :, itr] = e
+                W_tracked[:, :, itr] = W
         
-        if plasticity:
-            theta_tracked[:, itr] = theta
-            e_tracked[:, :, itr] = e
-            W_tracked[:, :, itr] = W
-        
-    
-    return_dict = dict(
-        times=times,
-        nu=nu_tracked,
-        s_NMDA=s_NMDA_tracked,
-        s_AMPA=s_AMPA_tracked,
-        s_GABA=s_GABA_tracked,
-        I_syn=I_syn_tracked,
-        theta=theta_tracked,
-        e=e_tracked,
-        W=W_tracked,
-        reward=reward_tracked
-    )
+    if store_states:
+        return_dict = dict(
+            times=times,
+            nu=nu_tracked,
+            s_NMDA=s_NMDA_tracked,
+            s_AMPA=s_AMPA_tracked,
+            s_GABA=s_GABA_tracked,
+            I_syn=I_syn_tracked,
+            theta=theta_tracked,
+            e=e_tracked,
+            W=W_tracked,
+            reward=reward_tracked
+        )
+    else:
+        return_dict = dict(
+            times=times,
+            reward=reward_tracked,
+            nu=nu,
+            s_NMDA=s_NMDA,
+            s_AMPA=s_AMPA,
+            s_GABA=s_GABA,
+            I_syn=I_syn,
+            theta=theta,
+            e=e,
+            W=W, 
+        )
     return return_dict
 
 # @jit  # faster to not plain jit
@@ -328,6 +352,7 @@ def run_trial(
     use_phi_fitted=True,
     plasticity_params=nolearn_parameters,
     randomstate=random_state_default,
+    store_states=True
 ):  
     # set weights
     # TODO: refactor so that W is input,
@@ -384,18 +409,20 @@ def run_trial(
     
     ## Initialise arrays to track values, and for simulation
     times = np.arange(0, total_time, defaultdt)
-    nu_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_NMDA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_AMPA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
-    I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
-    theta_tracked = np.full((p+2, times.shape[0]), np.nan)
+    # reward always tracked
     reward_tracked = np.full((1, times.shape[0]), np.nan)  # only one reward signal
-    e_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
-    W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
-    
-    if not plasticity:
-        W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
+    if store_states:
+        nu_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_NMDA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_AMPA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        s_GABA_tracked = np.full((p+2, times.shape[0]), np.nan)
+        I_syn_tracked = np.full((p+2, times.shape[0]), np.nan)
+        theta_tracked = np.full((p+2, times.shape[0]), np.nan)
+        e_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
+        W_tracked = np.full((p+2, p+2, times.shape[0]), np.nan)
+        
+        if not plasticity:
+            W_tracked = np.full((p+2, p+2, times.shape[0]), W.reshape(p+2, p+2, 1))
     
     ic_noise = np.zeros_like(s_AMPA)
     e = np.zeros_like(W)
@@ -495,37 +522,52 @@ def run_trial(
         if np.any(np.isnan(nu)) or np.any(np.isnan(W)):
             # break before storing the NaNs
             break
-            
-        nu_tracked[:, itr] = nu
-        s_NMDA_tracked[:, itr] = s_NMDA
-        s_AMPA_tracked[:, itr] = s_AMPA
-        s_GABA_tracked[:, itr] = s_GABA
-        I_syn_tracked[:, itr] = I_syn
-        reward_tracked[:, itr] = reward
         
-        if plasticity:
-            theta_tracked[:, itr] = theta
-            e_tracked[:, :, itr] = e
-            W_tracked[:, :, itr] = W
+        # reward always tracked
+        reward_tracked[:, itr] = reward
+        if store_states:
+            nu_tracked[:, itr] = nu
+            s_NMDA_tracked[:, itr] = s_NMDA
+            s_AMPA_tracked[:, itr] = s_AMPA
+            s_GABA_tracked[:, itr] = s_GABA
+            I_syn_tracked[:, itr] = I_syn
+            
+            if plasticity:
+                theta_tracked[:, itr] = theta
+                e_tracked[:, :, itr] = e
+                W_tracked[:, :, itr] = W
             
         # Not mentioned in W&W2006:
         # update V_avg for NMDA channel effects
         V_SS = V_L - I_syn / g_m
         V_avg = V_SS - (V_thr-V_reset)*nu*tau_m - (V_SS-V_reset)*nu*tau_rp
 
-    
-    return_dict = dict(
-        times=times,
-        nu=nu_tracked,
-        s_NMDA=s_NMDA_tracked,
-        s_AMPA=s_AMPA_tracked,
-        s_GABA=s_GABA_tracked,
-        I_syn=I_syn_tracked,
-        theta=theta_tracked,
-        e=e_tracked,
-        W=W_tracked,
-        reward=reward_tracked
-    )
+    if store_states:
+        return_dict = dict(
+            times=times,
+            nu=nu_tracked,
+            s_NMDA=s_NMDA_tracked,
+            s_AMPA=s_AMPA_tracked,
+            s_GABA=s_GABA_tracked,
+            I_syn=I_syn_tracked,
+            theta=theta_tracked,
+            e=e_tracked,
+            W=W_tracked,
+            reward=reward_tracked
+        )
+    else:
+        return_dict = dict(
+            times=times,
+            reward=reward_tracked,
+            nu=nu,
+            s_NMDA=s_NMDA,
+            s_AMPA=s_AMPA,
+            s_GABA=s_GABA,
+            I_syn=I_syn,
+            theta=theta,
+            e=e,
+            W=W, 
+        )
     return return_dict
 
 if __name__ == '__main__':
