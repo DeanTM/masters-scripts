@@ -43,6 +43,10 @@ parser.add_argument(
     '--figsize', type=float,
     default=4.
 )
+parser.add_argument(
+    '--fulltitle',
+    action='store_true'
+)
 
 args = parser.parse_args()
 
@@ -251,13 +255,18 @@ if __name__ == '__main__':
             )
         ax.set_ylabel('$w_+$')
         ax.set_xlabel('$w_-$')
+        if args.fulltitle:
+            title = 'Final Firing Rates\n' +\
+                f"total time:{total_time:.2f}s " +\
+                f"lambda_:{lambda_:.2f} " +\
+                f"f:{f:.2f} " +\
+                f"p:{p} " +\
+                f"fitted:{use_phi_fitted} "
+        else:
+            title = 'Final Firing Rates\n' +\
+                f"fitted:{use_phi_fitted} "
         ax.set_title(
-            'Final Firing Rates\n' +\
-            f"total time:{total_time:.2f}s " +\
-            f"lambda_:{lambda_:.2f} " +\
-            f"f:{f:.2f} " +\
-            f"p:{p} " +\
-            f"fitted:{use_phi_fitted} "
+            title
             )
         plt.tight_layout()
         plt.savefig(path.join(
