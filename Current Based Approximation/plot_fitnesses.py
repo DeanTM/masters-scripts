@@ -72,10 +72,7 @@ if __name__ == '__main__':
         )
 
     for checkpoint, params in checks_and_params:
-        try:
-            plot_fitness_curve(checkpoint, params)
-        except FileNotFoundError as e:
-            print("No checkpoints found for experiment: ", experiment)
+        plot_fitness_curve(checkpoint, params)
     plt.grid(ls=':', alpha=.5)
     plt.legend(title='task coherence', loc='lower right')
     title = "Performance of Evolved Synaptic Weights" if args.weights else "Performance of Evolved Learning Rules"
@@ -84,5 +81,5 @@ if __name__ == '__main__':
     plt.ylabel("Fitness")
     plt.xlabel("Generation")
     fname = 'weights_fitnesses.png' if args.weights else 'learning_rules_fitnesses.png'
-    plt.savefig('images_and_animations/learning_rules_fitnesses.png')
+    plt.savefig(path.join('images_and_animations', fname))
     plt.show()
