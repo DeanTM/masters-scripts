@@ -39,6 +39,10 @@ parser.add_argument(
     '-f', '--usefitted',
     action='store_true'
 )
+parser.add_argument(
+    '--figsize', type=float,
+    default=4.
+)
 
 args = parser.parse_args()
 
@@ -178,6 +182,7 @@ if __name__ == '__main__':
     if not args.nosave:
         import matplotlib.pyplot as plt
         from matplotlib.ticker import FormatStrFormatter
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
 
         save_datetime = save_datetime.replace(' ', '_')
         folder_suffix = '_'.join([__file__[:-3], save_datetime])
@@ -197,8 +202,8 @@ if __name__ == '__main__':
                 json.dump(parameters_dict, fp)
 
         # save_datetime = str(datetime.now())
-
-        fig, ax = plt.subplots(figsize=(7,6))
+        figsize = (args.figsize, args.figsize)
+        fig, ax = plt.subplots(figsize=figsize)
         ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
         ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
 
@@ -209,7 +214,10 @@ if __name__ == '__main__':
             # alpha=0.8
             # vmax=min(200., np.max(max_firing_rates))
             )
-        fig.colorbar(img)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+
+        fig.colorbar(img, cax=cax)
         # for i in range(gridsize):
         #     for j in range(gridsize):
         #         plt.text(
