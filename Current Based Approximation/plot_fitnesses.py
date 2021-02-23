@@ -9,8 +9,8 @@ parser.add_argument('-w', '--weights', action='store_true')
 args = parser.parse_args()
 
 def get_checkpoint_and_params(experiment_fname):
-    lr_evolution_base = '/home/dean/Projects/plasticity-code/Current Based Approximation/experiments/'
-    lr_evolution_prefix = lr_evolution_base + experiment_fname
+    lr_evolution_base = path.join(path.curdir, 'experiments')
+    lr_evolution_prefix = path.join(lr_evolution_base, experiment_fname)
     lr_evolution_checkpoints = path.join(lr_evolution_prefix, 'checkpoints')
     lr_evolution_parameters = path.join(lr_evolution_prefix, 'parameters')
     if not path.exists(lr_evolution_checkpoints) or not path.exists(lr_evolution_parameters):
