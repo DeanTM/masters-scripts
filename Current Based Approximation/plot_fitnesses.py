@@ -6,6 +6,9 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-w', '--weights', action='store_true')
+parser.add_argument('-m', '--mingen', type=int, default=30)
+parser.add_argument('-t', '--truncate', type=int, default=50)
+parser.add_argument('-p', type=int, default=2)
 args = parser.parse_args()
 
 def get_checkpoint_and_params(experiment_fname):
@@ -59,6 +62,8 @@ def plot_fitness_curve(checkpoint, params, ax=None):
 
 
 if __name__ == '__main__':
+    min_generations = args.mingen  # filter out short experiments
+    truncate_plot = args.truncate  # truncate long experiments
     if args.weights:
         experiment_type = 'find_optimal_weights'
     else:
@@ -73,12 +78,17 @@ if __name__ == '__main__':
         )
 
     for checkpoint, params in checks_and_params:
-        plot_fitness_curve(checkpoint, params)
+        num_generations = np.array(checkpoint['fitness_avg']).shape[0]
+        p = params['p']
+        if num_generations >= min_generations and p == args.p:
+            plot_fitness_curve(checkpoint, params)
     plt.grid(ls=':', alpha=.5)
     plt.legend(title='task coherence', loc='lower right')
+    plt.xlim(0, truncate_plot)
     title = "Performance of Evolved Synaptic Weights" if args.weights else "Performance of Evolved Learning Rules"
     plt.title(title)
-    plt.hlines(10. if args.weights else 100., 0., 50., ls='--', color='k')
+    # plt.hlines(10. if args.weights else 100., 0., 50., ls='--', color='k')
+    plt.axhline(10. if args.weights else 100., ls='--', color='k')
     plt.ylabel("Fitness")
     plt.xlabel("Generation")
     fname = 'weights_fitnesses.png' if args.weights else 'learning_rules_fitnesses.png'

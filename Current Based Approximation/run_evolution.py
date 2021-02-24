@@ -76,6 +76,10 @@ start_group.add_argument(
     '--w_plus', type=float,
     default=1.0, help='w_+ param to start with. Default (untrained) is 1.'
 )
+parser.add_argument(
+    '--show_anim', action='store_true',
+    help='whether to show the animation at the end of the EA'
+)
 
 args = parser.parse_args()
 
@@ -329,9 +333,12 @@ if __name__ == '__main__':
         def anim_func(i, ax=ax,ax2=ax2, cmap=plt.cm.cool):
             ax.clear()
             ax2.clear()
-            start_params = get_params_from_genome(strategy.stored_centroids[0])
-            end_params = get_params_from_genome(strategy.stored_centroids[-1])
-            params = get_params_from_genome(strategy.stored_centroids[i])
+            start_params = get_params_from_genome(
+                np.array(strategy.stored_centroids[0]))
+            end_params = get_params_from_genome(
+                np.array(strategy.stored_centroids[-1]))
+            params = get_params_from_genome(
+                np.array(strategy.stored_centroids[i]))
             # print(start_params, tau_mask)
             # print(start_params[~tau_mask])
             ax.plot(
@@ -392,4 +399,5 @@ if __name__ == '__main__':
             )
         anim.save(
             path.join(imagedir, f'parameters_animation.gif'))
-        plt.show()
+        if args.show_anim:
+            plt.show()
