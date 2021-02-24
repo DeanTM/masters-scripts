@@ -84,6 +84,7 @@ start_group.add_argument(
 args = parser.parse_args()
 
 script_running_datetime = str(datetime.now()).replace(' ', '_')
+print(f"Starting {__file__} at {script_running_datetime}")
 folder_suffix = '_'.join([__file__[:-3], script_running_datetime])
 folder_prefix = path.join(path.join('experiments', folder_suffix))
 
