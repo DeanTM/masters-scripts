@@ -8,6 +8,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-w', '--weights', action='store_true')
 parser.add_argument('--maxwplus', type=float, default=1.5)
 parser.add_argument('--alpha', type=float, default=0.3)
+parser.add_argument('--varalpha', action='store_true')
 parser.add_argument('-m', '--mingen', type=int, default=30)
 parser.add_argument('-t', '--truncate', type=int, default=50)
 parser.add_argument('-s', '--scaleup', action='store_true')
@@ -45,7 +46,8 @@ def plot_fitness_curve(
     checkpoint, params,
     ax=None, multiplier=1.,
     label_sigma=False,
-    alpha_full=0.3
+    alpha_full=0.3,
+    variable_alpha=True
     ):
     coherence = params['input_args']['coherence']
 
@@ -64,14 +66,25 @@ def plot_fitness_curve(
         fitness_avg,
         label=line_label
     )
-    l2 = ax.fill_between(
-        generations,
-        fitness_avg-fitness_std,
-        fitness_avg+fitness_std,
-        alpha=alpha_full,
-        color=l1[0].get_color(),
-    )
-    return l1, l2, ax
+    if not variable_alpha:
+        l2 = ax.fill_between(
+            generations,
+            fitness_avg-fitness_std,
+            fitness_avg+fitness_std,
+            alpha=alpha_full,
+            color=l1[0].get_color(),
+        )
+    else:
+        for g in range(generations.shape[0]):
+            l2 = ax.fill_between(
+                generations[g:g+2],
+                fitness_avg[g:g+2]-fitness_std[g:g+2],
+                fitness_avg[g:g+2]+fitness_std[g:g+2],
+                alpha=alpha_full * np.sqrt(10/(1+np.mean(fitness_std[g:g+2]))),
+                color=l1[0].get_color(),
+                edgecolor="none"
+            )
+    return ax
 
 
 if __name__ == '__main__':
@@ -97,7 +110,7 @@ if __name__ == '__main__':
     for checkpoint, params in checks_and_params:
         num_generations = np.array(checkpoint['fitness_avg']).shape[0]
         p = params['p']
-        w_plus = params['input_args']['w_plus']
+        w_plus = params['input_args'].get('w_plus', 1.0)  # default untrained
         start_trained = params['input_args']['start_trained']
         if num_generations >= min_generations and p == args.p \
             and w_plus <= args.maxwplus and not start_trained:
@@ -105,7 +118,8 @@ if __name__ == '__main__':
                 checkpoint, params,
                 multiplier=multiplier,
                 label_sigma=args.labelsigma,
-                alpha_full=args.alpha
+                alpha_full=args.alpha,
+                variable_alpha=args.varalpha
                 )
     plt.grid(ls=':', alpha=.5)
     legend_title = title='coherence'
