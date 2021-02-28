@@ -28,7 +28,7 @@ parser.add_argument(
     )
 parser.add_argument(
     '--coherence', type=float,
-    default=0.1, help='coherence score for stimulation inputs to neural units'
+    default=0.1, help='coherence score for stimulation inputs to neural units.'
     )
 parser.add_argument(
     '--task', type=str,
@@ -234,9 +234,6 @@ strategy = CMAStrategy(
     checkpoint_every=checkpoint_freq
 )
 
-
-# hof = tools.HallOfFame(args.hof)  # hopefully it will find values far apart
-
 toolbox = base.Toolbox()
 toolbox.register(
     "evaluate", fitness,
@@ -261,20 +258,10 @@ if __name__ == '__main__':
         script=__file__,
         n_workers=n_workers,
         nan_debug=nan_debug,
-        # task=task,
-        # coherence=args.coherence,
-        # n_runs=n_runs,
-        # n_multiples=n_multiples,
         w_plus_initial=w_plus,
         w_minus_initial=w_minus,
-        # use_phi_fitted=use_phi_fitted,
-        # penalty=penalty,
-        # sigma_initial=sigma,
-        # lambda_EA=lambda_EA,
         centroid_initial=centroid,
         cov_matrix_initial=cov_matrix_initial.tolist(),
-        # n_gen=n_gen,
-        # checkpoint_freq=checkpoint_freq,
         input_args=dict(vars(args))
     )
     parameters_dict.update(experiment_dict)
@@ -290,13 +277,11 @@ if __name__ == '__main__':
 
     toolbox.register("map", dask_map)
     
-    # if checkpoint_freq <= 0:
     start = time()
     pop, logbook = algorithms.eaGenerateUpdate(
             toolbox,
             ngen=n_gen,
             stats=stats,
-            # halloffame=hof,
             verbose=True
         )
     end = time()
@@ -306,7 +291,6 @@ if __name__ == '__main__':
 
     if strategy.track_fitnesses:
         fig, axes = plt.subplots(figsize=(12, 6))
-        # print("max fitnesses", strategy.fitness_max)
         axes.plot(
             np.arange(len(strategy.fitness_max)),
             strategy.fitness_max,

@@ -10,12 +10,14 @@ parser.add_argument('--maxwplus', type=float, default=1.5)
 parser.add_argument('--alpha', type=float, default=0.3)
 parser.add_argument('--varalpha', action='store_true')
 parser.add_argument('-m', '--mingen', type=int, default=30)
-parser.add_argument('-t', '--truncate', type=int, default=50)
+parser.add_argument('-t', '--truncate', type=int, default=40)
 parser.add_argument('-s', '--scaleup', action='store_true')
 parser.add_argument('-l', '--labelsigma', action='store_true')
+parser.add_argument('--stdwidth', type=float, default=1.)
 parser.add_argument('-p', type=int, default=2)
 args = parser.parse_args()
 
+#TODO: put helper functions in a separate file
 def get_checkpoint_and_params(experiment_fname):
     lr_evolution_base = path.join(path.curdir, 'experiments')
     lr_evolution_prefix = path.join(lr_evolution_base, experiment_fname)
@@ -47,7 +49,9 @@ def plot_fitness_curve(
     ax=None, multiplier=1.,
     label_sigma=False,
     alpha_full=0.3,
-    variable_alpha=True
+    variable_alpha=True,
+    stdwidth=1.,
+    colour=None
     ):
     coherence = params['input_args']['coherence']
 
@@ -64,13 +68,14 @@ def plot_fitness_curve(
     l1 = ax.plot(
         generations,
         fitness_avg,
-        label=line_label
+        label=line_label,
+        color=colour
     )
     if not variable_alpha:
         l2 = ax.fill_between(
             generations,
-            fitness_avg-fitness_std,
-            fitness_avg+fitness_std,
+            fitness_avg-stdwidth*fitness_std,
+            fitness_avg+stdwidth*fitness_std,
             alpha=alpha_full,
             color=l1[0].get_color(),
         )
@@ -78,8 +83,8 @@ def plot_fitness_curve(
         for g in range(generations.shape[0]):
             l2 = ax.fill_between(
                 generations[g:g+2],
-                fitness_avg[g:g+2]-fitness_std[g:g+2],
-                fitness_avg[g:g+2]+fitness_std[g:g+2],
+                fitness_avg[g:g+2]-stdwidth*fitness_std[g:g+2],
+                fitness_avg[g:g+2]+stdwidth*fitness_std[g:g+2],
                 alpha=alpha_full * np.sqrt(10/(1+np.mean(fitness_std[g:g+2]))),
                 color=l1[0].get_color(),
                 edgecolor="none"
@@ -107,6 +112,7 @@ if __name__ == '__main__':
         reverse=True
         )
 
+    checks_and_params_filtered = []
     for checkpoint, params in checks_and_params:
         num_generations = np.array(checkpoint['fitness_avg']).shape[0]
         p = params['p']
@@ -114,13 +120,19 @@ if __name__ == '__main__':
         start_trained = params['input_args']['start_trained']
         if num_generations >= min_generations and p == args.p \
             and w_plus <= args.maxwplus and not start_trained:
-            plot_fitness_curve(
-                checkpoint, params,
-                multiplier=multiplier,
-                label_sigma=args.labelsigma,
-                alpha_full=args.alpha,
-                variable_alpha=args.varalpha
-                )
+            checks_and_params_filtered.append( (checkpoint, params) )
+    for i, (checkpoint, params) in enumerate(checks_and_params_filtered):
+        # colour = cmap(i/len(checks_and_params_filtered))
+        plot_fitness_curve(
+            checkpoint, params,
+            multiplier=multiplier,
+            label_sigma=args.labelsigma,
+            alpha_full=args.alpha,
+            variable_alpha=args.varalpha,
+            stdwidth=args.stdwidth,
+            # colour=colour
+            )
+
     plt.grid(ls=':', alpha=.5)
     legend_title = title='coherence'
     if args.labelsigma:

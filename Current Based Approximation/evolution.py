@@ -29,6 +29,11 @@ class Genome(list):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.randomstate = None
+    
+    def update_randomstate(self, seed=None):
+        """Crude method to update randomstate within a loop."""
+        self.randomstate = np.random.RandomState(seed=seed)
+        return self
 
 
 class CMAStrategy(cma.Strategy):
