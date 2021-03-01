@@ -9,8 +9,9 @@ from datetime import datetime
 from os import path, mkdir
 import json
 
-script_running_datetime = datetime.now()
-folder_prefix = path.join(path.join('experiments', str(script_running_datetime)))
+script_running_datetime = str(datetime.now()).replace(' ', '_')
+folder_name = '_'.join([__file__[:-3], script_running_datetime])
+folder_prefix = path.join(path.join('experiments', folder_name))
 imagedir = path.join(folder_prefix, 'images_and_animations')
 paramsdir = path.join(folder_prefix, 'parameters')
 paramsfile = path.join(paramsdir, 'experiment_parameters.json')
@@ -84,7 +85,7 @@ def plot_average_membrane_potential(
     axes.grid(alpha=0.5)
     if title:
         axes.set_title(
-            r'Comparison of $\langle V \rangle$ formula to true values'
+            r'Comparison of $\langle V \rangle$'
             + f'\nGroup: {group}'
         )
     return None
@@ -277,7 +278,7 @@ if __name__ == '__main__':
     # Plot results
     V_drive_vals = [-55.*b2.mV, namespace['V_drive'], None]
     use_conductance_bools = [False, False, True]
-    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
+    fig, axes = plt.subplots(3, 2, figsize=(8, 9))
 
     net = None
     for k in range(3):
@@ -336,6 +337,7 @@ if __name__ == '__main__':
         if k == 0:
             axes[k,1].set_title(f'Firing Rate of Selected Population (Hz)\nsmoothed over {smoothing_window/b2.ms}ms')
         axes[k,1].grid(alpha=0.1)
+    fig.tight_layout()
     plt.savefig(path.join(imagedir,'conductance_current_comparison.png'))
     plt.show()
 
@@ -346,7 +348,7 @@ if __name__ == '__main__':
     #     use_conductance=use_conductance,
     #     namespace=namespace
     #     )
-    fig, axes = plt.subplots(1,2,figsize=(14, 5), sharey=True)
+    fig, axes = plt.subplots(1,2,figsize=(8, 4), sharey=True)
 
     axes[0].set_xlabel('time (ms)')
     axes[1].set_xlabel('time (ms)')
@@ -400,7 +402,7 @@ if __name__ == '__main__':
         )
 
     axes[1].add_patch(rectangle_patch)
-
+    fig.tight_layout()
     fig.subplots_adjust(wspace=0.05)
     plt.savefig(path.join(
         imagedir, f'average-membrane-potential-comparison_conductance_{use_conductance}.png'

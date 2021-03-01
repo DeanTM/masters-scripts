@@ -51,7 +51,7 @@ if __name__ == "__main__":
     min_time = 0.2 * b2.second
 
     # fig, axes = plt.subplots(2,2,figsize=(12, 8))
-    fig = plt.figure(figsize=(12, 8))
+    fig = plt.figure(figsize=(10, 6))
     ax1 = plt.subplot(2,2,1)
     mask = (net['st1'].t > min_time) & (net['st1'].t < max_time)
     # lines = axes[0,0].plot(net['st1'].t[mask], net['st1'].V.T[mask, :]/b2.mV, alpha=0.8, lw=1.)
@@ -62,7 +62,7 @@ if __name__ == "__main__":
             ax1.axvline(t/b2.second, color=lines[i].get_color(), ls=':', alpha=.3)
     # axes[0,0].set_ylabel('membrane potential (mV)\nmean-drive regime')
     # axes[0,0].set_title('Membrane Potential Trajectories')
-    ax1.set_ylabel('membrane potential (mV)\nmean-drive regime')
+    ax1.set_ylabel('membrane potential (mV)\nmean-driven regime')
     ax1.set_title('Membrane Potential Trajectories')
     ax1.set_xlim(min_time/b2.second, max_time/b2.second)
     ax1.grid(ls=':', alpha=0.2)
@@ -85,7 +85,7 @@ if __name__ == "__main__":
             ax3.axvline(t/b2.second, color=lines[i].get_color(), ls=':', alpha=.3)
     # axes[1,0].set_ylabel('membrane potential (mV)\nfluctuation-drive regime')
     # axes[1,0].set_xlabel('time')
-    ax3.set_ylabel('membrane potential (mV)\nfluctuation-drive regime')
+    ax3.set_ylabel('membrane potential (mV)\nfluctuation-driven regime')
     ax3.set_xlabel('time')
     ax3.grid(ls=':', alpha=0.2)
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     ax4.grid(ls=':', alpha=0.2)
 
     plt.tight_layout()
-    plt.savefig('comparison-of-firing-regimes.png')
+    plt.savefig('images_and_animations/comparison-of-firing-regimes.png')
     plt.show()
 
 

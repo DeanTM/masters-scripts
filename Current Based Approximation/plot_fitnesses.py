@@ -137,7 +137,7 @@ if __name__ == '__main__':
     legend_title = title='coherence'
     if args.labelsigma:
         legend_title += ' | sigma'
-    plt.legend(title=legend_title, loc='lower right')
+    plt.legend(title=legend_title, loc='best', ncol=2)
     plt.xlim(0, truncate_plot)
     title = "Performance of Evolved Synaptic Weights" if args.weights else "Performance of Evolved Learning Rules"
     if args.weights and args.scaleup:

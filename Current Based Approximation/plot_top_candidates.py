@@ -104,7 +104,7 @@ def plasticity_fitness(
         )
         for i in range(n_multiples)]
     fitness = 0.
-    for j, results_dict in enumerate(all_results):
+    for results_dict in all_results:
         fitness += get_rewards(results_dict)
     return fitness / n_multiples
 
@@ -240,8 +240,15 @@ if __name__ == "__main__":
         yerr=best_fitness_std,
         color='gray',
         label='Population Average')
-    fitness_samples = np.zeros(shape=(len(coherences), num_samples))
+    fitness_samples = None
+    if not evaluate_samples:
+        # TODO: make this if load_samples and allow no sampling plot at all
+        # as an option
+        # load fixed samples
+        fitness_samples = np.load(
+            'experiments/plot_top_candidates_2021-02-28_19:12:06.488464/samples/samples.npy')
     if evaluate_samples:
+        fitness_samples = np.zeros(shape=(len(coherences), num_samples))
         print(f"Starting sampling using function {evaluate}...")
         first_hof_entries = [x.update_randomstate() for x in first_hof_entries]
         states = [x.randomstate.get_state()[1] for x in first_hof_entries]
@@ -272,11 +279,12 @@ if __name__ == "__main__":
             if not path.exists(samplesdir):
                 mkdir(samplesdir)
             coherences_array = np.array(coherences)
-            first_hof_array = np.array(list(x) for x in first_hof_entries)
+            first_hof_array = np.array([list(x) for x in first_hof_entries])
             np.save(path.join(samplesdir, 'samples.npy'), fitness_samples)
             np.save(path.join(samplesdir, 'coherences.npy'), coherences_array)
             np.save(path.join(samplesdir, 'genomes.npy'), first_hof_array)
-
+    
+    if fitness_samples is not None:
         for i, c in enumerate(coherences):
             x_vals = np.full_like(fitness_samples[i,:], c)
             label = None

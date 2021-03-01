@@ -47,6 +47,10 @@ parser.add_argument(
     '--fulltitle',
     action='store_true'
 )
+parser.add_argument(
+    '--legend',
+    action='store_true'
+)
 
 args = parser.parse_args()
 
@@ -241,7 +245,8 @@ if __name__ == '__main__':
         ax.plot(w_minus_plotvals, w_plus_plotvals, ls='-.', color='white', label='starting curve')
         ax.plot([0., 2.1], [2.1, 2.1], ls=':', color='black', label='initial bounds')
         ax.plot([2.1, 2.1], [0., 2.1], ls=':', color='black')
-        ax.legend(loc='upper right', facecolor='gray')
+        if args.legend:
+            ax.legend(loc='upper right', facecolor='gray')
         ax.set_xticklabels(
             labels=labels,
             rotation=90
