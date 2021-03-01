@@ -112,7 +112,9 @@ if __name__ == '__main__':
         reverse=True
         )
 
-    checks_and_params_filtered = []
+    # checks_and_params_filtered = []
+    best_per_coherence = {}
+    best_scores_per_coherence = {}
     for checkpoint, params in checks_and_params:
         num_generations = np.array(checkpoint['fitness_avg']).shape[0]
         p = params['p']
@@ -120,7 +122,25 @@ if __name__ == '__main__':
         start_trained = params['input_args']['start_trained']
         if num_generations >= min_generations and p == args.p \
             and w_plus <= args.maxwplus and not start_trained:
-            checks_and_params_filtered.append( (checkpoint, params) )
+            # first_hof_member = checkpoint['halloffame'][0]
+            # first_hof_entries.append(first_hof_member)
+            fitness_avg = np.array(checkpoint['fitness_avg']) * multiplier
+            fitness_std = np.array(checkpoint['fitness_std']) * multiplier
+            # fitness_index = np.argmax(fitness_avg-fitness_std)
+            best_fitness = np.max(fitness_avg-fitness_std)
+            coherence = params['input_args']['coherence']
+            if coherence not in best_scores_per_coherence:
+                best_per_coherence[coherence] = (checkpoint, params)
+                best_scores_per_coherence[coherence] = best_fitness
+            elif best_fitness > best_scores_per_coherence[coherence]:
+                best_per_coherence[coherence] = (checkpoint, params)
+                best_scores_per_coherence[coherence] = best_fitness
+            # fitness_indices.append(fitness_index)
+            # best_fitnesses.append(fitness_avg[fitness_index])
+            # best_fitness_std.append(fitness_std[fitness_index])
+
+            # checks_and_params_filtered.append( (checkpoint, params) )
+    checks_and_params_filtered = list(best_per_coherence.values())
     for i, (checkpoint, params) in enumerate(checks_and_params_filtered):
         # colour = cmap(i/len(checks_and_params_filtered))
         plot_fitness_curve(
