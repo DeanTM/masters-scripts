@@ -5,6 +5,8 @@ from numba import jit
 
 from scipy import special, integrate
 
+from os import path
+
 
 def set_size(width, fraction=1):
     """Set figure dimensions to avoid scaling in LaTeX.
@@ -239,26 +241,33 @@ def polyfunc(x, coeff):
         s += c_ * (x**n)
     return s
 
+if path.exists('polyfit_coeffs_excitatory.npy'):
+    polyfit_coeffs_E = np.load('polyfit_coeffs_excitatory.npy')
+    max_rate_E = 1./tau_rp_E
+    @jit(nopython=True)
+    def phi_fit_E(I_syn, sigma):
+        c = polyfunc(sigma, coeff=polyfit_coeffs_E[0, :])
+        I = polyfunc(sigma, coeff=polyfit_coeffs_E[1, :])
+        g = polyfunc(sigma, coeff=polyfit_coeffs_E[2, :])
+        rates = phi_fit(I_syn, c,I,g)
+        rates[rates > max_rate_E] = max_rate_E
+        return rates
+else:
+    def phi_fit_E(I_syn, sigma):
+        raise NotImplementedError("Polynomial fit has not been performed.")
 
-polyfit_coeffs_E = np.load('polyfit_coeffs_excitatory.npy')
-max_rate_E = 1./tau_rp_E
-@jit(nopython=True)
-def phi_fit_E(I_syn, sigma):
-    c = polyfunc(sigma, coeff=polyfit_coeffs_E[0, :])
-    I = polyfunc(sigma, coeff=polyfit_coeffs_E[1, :])
-    g = polyfunc(sigma, coeff=polyfit_coeffs_E[2, :])
-    rates = phi_fit(I_syn, c,I,g)
-    rates[rates > max_rate_E] = max_rate_E
-    return rates
-
-# sigma is ignored parameter, kept for signatures to match
-c_I, I_I, g_I = np.load('direct_fit_inhibitory.npy')
-max_rate_I = 1./tau_rp_I
-@jit(nopython=True)
-def phi_fit_I(I_syn, sigma=None):
-    rates = phi_fit(I_syn, c_I, I_I, g_I)
-    rates[rates > max_rate_I] = max_rate_I
-    return rates
+if path.exists('direct_fit_inhibitory.npy'):
+    # sigma is ignored parameter, kept for signatures to match
+    c_I, I_I, g_I = np.load('direct_fit_inhibitory.npy')
+    max_rate_I = 1./tau_rp_I
+    @jit(nopython=True)
+    def phi_fit_I(I_syn, sigma=None):
+        rates = phi_fit(I_syn, c_I, I_I, g_I)
+        rates[rates > max_rate_I] = max_rate_I
+        return rates
+else:
+    def phi_fit_I(I_syn, sigma=None):
+        raise NotImplementedError("Direct fit has not been performed.")
 #endregion
 
 #region Euler derivative updates
